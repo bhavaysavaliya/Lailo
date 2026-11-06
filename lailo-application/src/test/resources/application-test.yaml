@@ -1,0 +1,28 @@
+# Embedded MongoDB via flapdoodle's Spring Boot auto-configuration (it rewrites spring.mongodb.uri to the embedded server).
+de:
+  flapdoodle:
+    mongodb:
+      embedded:
+        version: 7.0.15
+
+spring:
+  mongodb:
+    database: lailo_test
+
+lailo:
+  outbox:
+    poll-interval: 200ms
+  auth:
+    otp:
+      fixed-code: "123456"
+      hash-secret: test-otp-hmac-secret-0123456789abcdef
+    jwt:
+      secret: test-jwt-hmac-secret-0123456789abcdef
+    cookies:
+      secure: false
+
+logging:
+  level:
+    org.apache.kafka: WARN
+    kafka: WARN
+    org.mongodb.driver: WARN

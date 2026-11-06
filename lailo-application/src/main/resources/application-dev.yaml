@@ -1,0 +1,24 @@
+# Local development only. Activate with: ./mvnw spring-boot:run  (the plugin enables the "dev" profile)
+# or SPRING_PROFILES_ACTIVE=dev in your IDE run configuration.
+spring:
+  r2dbc:
+    password: ${DB_PASSWORD:lailo}
+  flyway:
+    password: ${DB_PASSWORD:lailo}
+
+lailo:
+  auth:
+    otp:
+      fixed-code: "123456"   # every OTP is 123456 until an SMS/email provider is integrated
+      hash-secret: ${LAILO_OTP_HASH_SECRET:dev-only-otp-hmac-secret-change-me-0123456789}
+    jwt:
+      secret: ${LAILO_JWT_SECRET:dev-only-jwt-hmac-secret-change-me-0123456789}
+    cookies:
+      secure: false          # http://localhost
+    rate-limit:
+      otp-per-ip-per-window: 100
+      captcha-per-ip-per-window: 200
+
+logging:
+  level:
+    com.lailo: DEBUG

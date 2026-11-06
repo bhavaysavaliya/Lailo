@@ -1,0 +1,94 @@
+# Production-safe defaults. Every secret comes from the environment; local values live in application-dev.yaml.
+spring:
+  application:
+    name: lailo-application
+  config:
+    import: optional:file:.env[.properties]
+
+  r2dbc:
+    url: ${DB_R2DBC_URL:r2dbc:postgresql://localhost:5432/lailo}
+    username: ${DB_USERNAME:lailo}
+    password: ${DB_PASSWORD:}
+    pool:
+      initial-size: 5
+      max-size: 20
+
+  # Flyway migrates over JDBC before the reactive app starts serving.
+  flyway:
+    url: ${DB_JDBC_URL:jdbc:postgresql://localhost:5432/lailo}
+    user: ${DB_USERNAME:lailo}
+    password: ${DB_PASSWORD:}
+    locations: classpath:db/migration
+
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017/lailo}
+    database: ${MONGODB_DATABASE:lailo}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+lailo:
+  web:
+    allowed-origins: ${LAILO_WEB_ORIGINS:http://localhost:3000}
+  outbox:
+    poll-interval: 1s
+  auth:
+    default-region: IN
+    default-country-code: "91"
+    otp:
+      length: 6
+      ttl: 5m
+      resend-cooldown: 30s
+      max-verify-attempts: 5
+      fixed-code: ""                       # NEVER set in production
+      hash-secret: ${LAILO_OTP_HASH_SECRET}
+    captcha:
+      provider: ${LAILO_CAPTCHA_PROVIDER:builtin}   # builtin | turnstile
+      ttl: 2m
+      length: 5
+      turnstile-site-key: ${LAILO_TURNSTILE_SITE_KEY:}
+      turnstile-secret: ${LAILO_TURNSTILE_SECRET:}
+    jwt:
+      secret: ${LAILO_JWT_SECRET}
+      issuer: lailo
+      access-token-ttl: 15m
+    session:
+      refresh-token-ttl: 30d
+    cookies:
+      secure: true
+      domain: ""
+    rate-limit:
+      otp-per-ip-per-window: 10
+      otp-per-identifier-per-window: 5
+      otp-window: 15m
+      captcha-per-ip-per-window: 30
+      captcha-window: 5m

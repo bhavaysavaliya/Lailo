@@ -1,0 +1,125 @@
+# ---------------------------------------------------------------------------
+# Lailo monorepo - repo-wide rules.
+# This is the only .gitignore: module rules are in the lailo-web and lailo-application sections below.
+# ---------------------------------------------------------------------------
+
+# --- Secrets & local environment ---------------------------------------------
+# Real values come from the environment; only templates are committed.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+!**/src/test/resources/**/*.jks
+
+# --- OS ----------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Editors & IDEs ----------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+/out/
+.vscode/*
+# shareable VS Code config can be opted in explicitly
+!.vscode/extensions.json
+.fleet/
+.zed/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+
+# Local tool output (e.g. GitHub Copilot app-modernization reports). Keep the rest of .github (CI workflows).
+.github/modernize/
+
+# --- AI assistants -----------------------------------------------------------
+# Project skills in .claude/skills are shared; personal settings are not.
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
+
+# --- Logs, dumps & temp files ------------------------------------------------
+*.log
+/logs/
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
+/tmp/
+/temp/
+*.tmp
+*.bak
+
+# --- Node.js (any package in the repo) ---------------------------------------
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+
+# --- lailo-web (Next.js) -----------------------------------------------------
+/lailo-web/.next/
+/lailo-web/out/
+/lailo-web/build/
+/lailo-web/.turbo/
+/lailo-web/.vercel/
+/lailo-web/next-env.d.ts
+# tests: Vitest coverage, Playwright artifacts and saved logins
+/lailo-web/coverage/
+/lailo-web/.vitest/
+/lailo-web/test-results/
+/lailo-web/playwright-report/
+/lailo-web/blob-report/
+/lailo-web/playwright/.cache/
+/lailo-web/playwright/.auth/
+
+# --- lailo-application (Spring Boot / Maven) ---------------------------------
+/lailo-application/target/
+/lailo-application/build/
+/lailo-application/bin/
+/lailo-application/out/
+/lailo-application/logs/
+/lailo-application/HELP.md
+# Maven wrapper jar is downloaded by mvnw; release/flatten/shade leftovers
+/lailo-application/.mvn/wrapper/maven-wrapper.jar
+/lailo-application/.flattened-pom.xml
+/lailo-application/dependency-reduced-pom.xml
+/lailo-application/pom.xml.tag
+/lailo-application/pom.xml.releaseBackup
+/lailo-application/pom.xml.versionsBackup
+/lailo-application/release.properties
+# Personal config overrides, e.g. application-local.yaml with your own credentials
+/lailo-application/src/main/resources/application-local.*
+# Spring Tool Suite / Eclipse
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+# NetBeans
+/lailo-application/nbproject/private/
+/lailo-application/nbbuild/
+/lailo-application/dist/
+/lailo-application/nbdist/
+/lailo-application/.nb-gradle/
