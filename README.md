@@ -70,6 +70,8 @@ Lailo is early. What exists today:
 
 ### Architecture in brief
 
+Full write-up with diagrams: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (also as [PDF](docs/ARCHITECTURE.pdf)).
+
 - **CQRS.** Each use case is a command or query handler. Writes go to PostgreSQL; read models live in MongoDB.
 - **Transactional outbox → Kafka.** State changes and their events commit together, then events are published to Kafka to update read models and, later, recommendations and notifications.
 - **Redis** for short-lived state: captchas, OTPs, rate limits.

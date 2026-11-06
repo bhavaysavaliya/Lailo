@@ -1,0 +1,13 @@
+{
+  "name": "lailo-docs-tools",
+  "private": true,
+  "type": "module",
+  "description": "Renders docs/*.md (with Mermaid diagrams) to PDF using lailo-web's Playwright Chromium.",
+  "scripts": {
+    "pdf": "node md-to-pdf.mjs ../ARCHITECTURE.md ../ARCHITECTURE.pdf . ../../lailo-web/node_modules/playwright/index.mjs"
+  },
+  "dependencies": {
+    "marked": "15.0.12",
+    "mermaid": "11.17.2"
+  }
+}
