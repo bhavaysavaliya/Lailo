@@ -205,6 +205,35 @@
 					</profiles>
 				</configuration>
 			</plugin>
+			<!-- Fails the build when a type, constructor or method (main or test) has no Javadoc -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-checkstyle-plugin</artifactId>
+				<version>3.6.0</version>
+				<dependencies>
+					<dependency>
+						<groupId>com.puppycrawl.tools</groupId>
+						<artifactId>checkstyle</artifactId>
+						<version>14.4.0</version>
+					</dependency>
+				</dependencies>
+				<configuration>
+					<configLocation>config/checkstyle/javadoc.xml</configLocation>
+					<includeTestSourceDirectory>true</includeTestSourceDirectory>
+					<consoleOutput>true</consoleOutput>
+					<failOnViolation>true</failOnViolation>
+					<violationSeverity>error</violationSeverity>
+				</configuration>
+				<executions>
+					<execution>
+						<id>javadoc-required</id>
+						<phase>validate</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 			<!-- Exposes ${org.mockito:mockito-core:jar} so Mockito loads as a javaagent (JDK 21+) -->
 			<plugin>
 				<artifactId>maven-dependency-plugin</artifactId>
@@ -241,6 +270,16 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
+				<!-- Javadoc is mandatory on every type, constructor and method (all access levels), in main and test code -->
+				<configuration>
+					<showWarnings>true</showWarnings>
+					<compilerArgs>
+						<!-- malformed Javadoc (bad tags, broken HTML/references) is reported; missing comments are enforced by Checkstyle -->
+						<arg>-Xdoclint:accessibility/private,html/private,reference/private,syntax/private</arg>
+						<arg>-Xmaxwarns</arg>
+						<arg>10000</arg>
+					</compilerArgs>
+				</configuration>
 				<executions>
 					<execution>
 						<id>default-compile</id>

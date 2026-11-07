@@ -8,10 +8,22 @@ import { expect, test } from "@playwright/test";
  */
 test.skip(!process.env.E2E_FULLSTACK, "set E2E_FULLSTACK=1 with the backend running");
 
+/**
+ * Reads the expected captcha answer straight from Redis, since the image is deliberately not machine-readable.
+ *
+ * @param captchaId challenge id from the captcha response
+ * @returns the answer
+ */
 function captchaAnswer(captchaId: string): string {
   return execFileSync("redis-cli", ["GET", `captcha:${captchaId}`]).toString().trim();
 }
 
+/**
+ * A new user signs up with a mobile number through the real stack, then signs out.
+ * - Given Next.js, the Spring Boot API and its services running (E2E_FULLSTACK=1), and a random new mobile number
+ * - When the user solves the captcha, enters 123456, lands on /account, then clicks Sign out
+ * - Then the account shows +91 and the number; the access cookie is HttpOnly and invisible to page scripts; after sign-out the form is empty and /account redirects to /login
+ */
 test("new user signs up with a mobile number and signs out @fullstack", async ({ page }) => {
   const phone = `9${Math.floor(100_000_000 + Math.random() * 899_999_999)}`;
   const captchaResponse = page.waitForResponse("**/api/v1/auth/captcha");

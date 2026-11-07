@@ -4,14 +4,21 @@ import com.lailo.application.features.auth.config.AuthProperties;
 
 import java.time.Duration;
 
+/** Builds {@link AuthProperties} for tests that construct beans by hand (no Spring context). */
 public final class TestAuthProperties {
 
     public static final String OTP_SECRET = "test-otp-hmac-secret-0123456789abcdef";
     public static final String JWT_SECRET = "test-jwt-hmac-secret-0123456789abcdef";
 
+    /** Not instantiable: static factory. */
     private TestAuthProperties() {
     }
 
+    /**
+     * Default test settings: production-like limits, test secrets, insecure cookies, built-in captcha.
+     *
+     * @return the properties
+     */
     public static AuthProperties create() {
         return new AuthProperties(
                 new AuthProperties.Otp(6, Duration.ofMinutes(5), Duration.ofSeconds(30), 5, "", OTP_SECRET),

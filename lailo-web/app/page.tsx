@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+/** Placeholder home page with links to sign in and to the account page, until the chat screen exists. */
 export default function Home() {
   return (
     <main className="flex flex-1 flex-col items-start justify-center gap-6 px-6 py-24 sm:px-16">

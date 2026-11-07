@@ -4,6 +4,10 @@ import { AuthFlow } from "./auth-flow";
 
 export const metadata: Metadata = { title: "Sign in" };
 
+/**
+ * Sign-in / sign-up page: brand panel plus the {@link AuthFlow} form.
+ * The form reads search params, so it renders inside a Suspense boundary.
+ */
 export default function LoginPage() {
   return (
     <main className="grid flex-1 grid-rows-[auto_1fr] lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:grid-rows-1">

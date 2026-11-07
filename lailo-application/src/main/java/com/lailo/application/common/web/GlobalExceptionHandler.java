@@ -16,6 +16,12 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    /**
+     * Maps a business error to a problem response carrying its status, {@code code} and details.
+     *
+     * @param ex the business error
+     * @return RFC 9457 problem detail
+     */
     @ExceptionHandler(ApiException.class)
     public ProblemDetail handleApi(ApiException ex) {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(ex.getStatus(), ex.getMessage());
@@ -24,6 +30,13 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /**
+     * Maps Bean Validation failures to a 400 with {@code code=VALIDATION_FAILED} and an {@code errors} map of
+     * field name to the first message for that field.
+     *
+     * @param ex the binding exception raised for an invalid request body
+     * @return RFC 9457 problem detail
+     */
     @ExceptionHandler(WebExchangeBindException.class)
     public ProblemDetail handleValidation(WebExchangeBindException ex) {
         Map<String, String> errors = new LinkedHashMap<>();
@@ -34,6 +47,12 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /**
+     * Maps an unreadable request (bad JSON, wrong types) to a 400 with {@code code=BAD_REQUEST}.
+     *
+     * @param ex the input exception
+     * @return RFC 9457 problem detail
+     */
     @ExceptionHandler(ServerWebInputException.class)
     public ProblemDetail handleBadInput(ServerWebInputException ex) {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Malformed request.");
@@ -41,6 +60,12 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /**
+     * Last-resort handler: logs the exception and returns a generic 500 that reveals no internals.
+     *
+     * @param ex any unhandled exception
+     * @return RFC 9457 problem detail with {@code code=INTERNAL_ERROR}
+     */
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUnexpected(Exception ex) {
         log.error("Unhandled error", ex);

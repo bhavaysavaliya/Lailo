@@ -25,16 +25,36 @@ public class TurnstileCaptchaService implements CaptchaService {
     private final AuthProperties.Captcha cfg;
     private final WebClient webClient;
 
+    /**
+     * Creates the service with a WebClient pointed at the configured siteverify host.
+     *
+     * @param props captcha settings
+     * @param builder Spring's shared WebClient builder
+     */
     public TurnstileCaptchaService(AuthProperties props, WebClient.Builder builder) {
         this.cfg = props.captcha();
         this.webClient = builder.baseUrl(cfg.turnstileBaseUrl()).build();
     }
 
+    /**
+     * Turnstile challenges are rendered by the widget, so this only returns the site key.
+     *
+     * @return challenge with provider {@code turnstile} and the site key
+     */
     @Override
     public Mono<CaptchaChallenge> issue() {
         return Mono.just(new CaptchaChallenge("turnstile", null, null, cfg.turnstileSiteKey(), 300));
     }
 
+    /**
+     * Verifies the widget token with Cloudflare's siteverify API (5 s timeout). Any error or timeout counts as
+     * not verified.
+     *
+     * @param captchaId ignored by this provider
+     * @param token the widget token
+     * @param remoteIp caller IP, forwarded to Cloudflare when known
+     * @return {@code true} only when Cloudflare reports success
+     */
     @Override
     public Mono<Boolean> verify(String captchaId, String token, String remoteIp) {
         if (token == null || token.isBlank()) {
@@ -60,6 +80,11 @@ public class TurnstileCaptchaService implements CaptchaService {
                 });
     }
 
+    /**
+     * The part of the siteverify response the service relies on.
+     *
+     * @param success whether the token was valid
+     */
     record SiteVerifyResponse(boolean success) {
     }
 }

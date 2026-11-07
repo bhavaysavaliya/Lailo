@@ -12,6 +12,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import java.security.SecureRandom;
 import java.time.Clock;
 
+/**
+ * Shared infrastructure beans for the auth feature; also binds {@link AuthProperties} and enables scheduling
+ * (needed by the outbox relay).
+ */
 @Configuration
 @EnableScheduling
 @EnableConfigurationProperties(AuthProperties.class)
@@ -30,6 +34,11 @@ public class AuthBeansConfig {
         return TopicBuilder.name(AuthEvents.TOPIC).partitions(partitions).replicas(replicas).build();
     }
 
+    /**
+     * Cryptographically strong random source for OTPs, refresh tokens and captcha text.
+     *
+     * @return a new {@code SecureRandom}
+     */
     @Bean
     SecureRandom secureRandom() {
         return new SecureRandom();

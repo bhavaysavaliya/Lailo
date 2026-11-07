@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type ClipboardEvent, type KeyboardEvent } from "react";
 
+/** Props for {@link OtpInput}: controlled value, completion callback and visual states. */
 type Props = {
   length?: number;
   value: string;
@@ -26,11 +27,22 @@ export function OtpInput({ length = 6, value, onChange, onComplete, disabled, in
   }, [value]);
   const digits = Array.from({ length }, (_, i) => value[i] ?? "");
 
+  /**
+   * Updates the latest-value ref immediately, then notifies the parent.
+   *
+   * @param next the new contiguous digit string
+   */
   const set = (next: string) => {
     latest.current = next;
     onChange(next);
   };
 
+  /**
+   * Keeps digits only, caps the length, stores it and fires `onComplete` once all cells are filled.
+   *
+   * @param next raw candidate value
+   * @returns the cleaned value
+   */
   const commit = (next: string) => {
     const clean = next.replace(/\D/g, "").slice(0, length);
     set(clean);
@@ -38,8 +50,20 @@ export function OtpInput({ length = 6, value, onChange, onComplete, disabled, in
     return clean;
   };
 
+  /**
+   * Focuses a cell, clamped to the valid range.
+   *
+   * @param i cell index
+   */
   const focus = (i: number) => refs.current[Math.max(0, Math.min(length - 1, i))]?.focus();
 
+  /**
+   * Handles typing in a cell. One digit replaces that cell; several digits (paste or SMS autofill) fill
+   * from this cell onwards. Focus moves to the next empty cell.
+   *
+   * @param i cell index
+   * @param raw the input's new value
+   */
   const handleInput = (i: number, raw: string) => {
     const typed = raw.replace(/\D/g, "");
     if (!typed) return;
@@ -49,6 +73,12 @@ export function OtpInput({ length = 6, value, onChange, onComplete, disabled, in
     focus(Math.min(i + typed.length, clean.length));
   };
 
+  /**
+   * Keyboard navigation: Backspace clears the cell or steps back, arrows move between cells.
+   *
+   * @param i cell index
+   * @param e the keyboard event
+   */
   const handleKeyDown = (i: number, e: KeyboardEvent<HTMLInputElement>) => {
     const value = latest.current;
     if (e.key === "Backspace") {
@@ -66,6 +96,11 @@ export function OtpInput({ length = 6, value, onChange, onComplete, disabled, in
     }
   };
 
+  /**
+   * Fills the cells from pasted text (digits only) and focuses the next empty cell.
+   *
+   * @param e the paste event
+   */
   const handlePaste = (e: ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
     const clean = commit(e.clipboardData.getData("text"));

@@ -37,6 +37,13 @@ public class SendOtpHandler implements CommandHandler<SendOtpCommand, SendOtpCom
     private final OtpSender sender;
     private final RefreshTokenCodec digest;
 
+    /**
+     * Validates the identifier, then runs the throttles and captcha check in order and issues the code.
+     *
+     * @param cmd the request
+     * @return the send result, or an {@code ApiException}: {@code INVALID_IDENTIFIER}, {@code RATE_LIMITED},
+     *         {@code CAPTCHA_INVALID} or {@code OTP_RESEND_COOLDOWN}
+     */
     @Override
     public Mono<SendOtpCommand.Result> handle(SendOtpCommand cmd) {
         return Mono.fromCallable(() -> Identifier.parse(cmd.identifier(), props.defaultCountryCode()))
@@ -46,17 +53,35 @@ public class SendOtpHandler implements CommandHandler<SendOtpCommand, SendOtpCom
                         .then(Mono.defer(() -> issue(identifier))));
     }
 
+    /**
+     * Enforces the per-IP OTP quota for the current window.
+     *
+     * @param cmd the request
+     * @return empty when allowed, {@code RATE_LIMITED} otherwise
+     */
     private Mono<Void> throttleIp(SendOtpCommand cmd) {
         AuthProperties.RateLimit rl = props.rateLimit();
         return rateLimiter.tryAcquire("otp:ip:" + cmd.client().ipAddress(), rl.otpPerIpPerWindow(), rl.otpWindow())
                 .flatMap(ok -> ok ? Mono.empty() : Mono.error(AuthErrors.tooManyRequests(rl.otpWindow())));
     }
 
+    /**
+     * Verifies and consumes the captcha.
+     *
+     * @param cmd the request
+     * @return empty when solved, {@code CAPTCHA_INVALID} otherwise
+     */
     private Mono<Void> verifyCaptcha(SendOtpCommand cmd) {
         return captchaService.verify(cmd.captchaId(), cmd.captchaAnswer(), cmd.client().ipAddress())
                 .flatMap(ok -> ok ? Mono.empty() : Mono.error(AuthErrors.captchaInvalid()));
     }
 
+    /**
+     * Applies the resend cooldown, then the per-identifier quota. Keys use a hash of the identifier.
+     *
+     * @param identifier normalised destination
+     * @return empty when allowed, {@code OTP_RESEND_COOLDOWN} or {@code RATE_LIMITED} otherwise
+     */
     private Mono<Void> throttleIdentifier(Identifier identifier) {
         AuthProperties.RateLimit rl = props.rateLimit();
         String idKey = digest.hash(identifier.value()); // keep raw PII out of Redis key names
@@ -66,6 +91,12 @@ public class SendOtpHandler implements CommandHandler<SendOtpCommand, SendOtpCom
                 .flatMap(ok -> ok ? Mono.empty() : Mono.error(AuthErrors.tooManyRequests(rl.otpWindow())));
     }
 
+    /**
+     * Generates the code, stores its keyed hash under a new request id and hands it to the sender.
+     *
+     * @param identifier normalised destination
+     * @return the send result
+     */
     private Mono<SendOtpCommand.Result> issue(Identifier identifier) {
         AuthProperties.Otp cfg = props.otp();
         String requestId = UUID.randomUUID().toString();
@@ -77,6 +108,11 @@ public class SendOtpHandler implements CommandHandler<SendOtpCommand, SendOtpCom
                         cfg.ttl().toSeconds(), cfg.resendCooldown().toSeconds()));
     }
 
+    /**
+     * Serves {@link SendOtpCommand}.
+     *
+     * @return the command class
+     */
     @Override
     public Class<SendOtpCommand> commandType() {
         return SendOtpCommand.class;

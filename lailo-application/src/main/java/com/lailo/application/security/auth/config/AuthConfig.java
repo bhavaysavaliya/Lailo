@@ -51,6 +51,16 @@ import java.util.List;
 @EnableWebFluxSecurity
 public class AuthConfig {
 
+    /**
+     * Builds the WebFlux security filter chain: CORS, cookie-based CSRF, stateless JWT authentication and the
+     * public/protected route rules. Form login, HTTP basic and Spring's logout are disabled.
+     *
+     * @param http the security builder
+     * @param jwtDecoder verifies access tokens
+     * @param props auth settings (cookie names, secure flag)
+     * @param corsConfigurationSource CORS rules for {@code /api/**}
+     * @return the configured filter chain
+     */
     @Bean
     public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http,
                                                          ReactiveJwtDecoder jwtDecoder,
@@ -93,6 +103,13 @@ public class AuthConfig {
         };
     }
 
+    /**
+     * Reads the bearer token from the {@code Authorization} header if present, otherwise from the access-token
+     * cookie, so browsers (cookie) and other clients (header) are both supported.
+     *
+     * @param cookieName name of the access-token cookie
+     * @return a converter that emits a bearer token, or completes empty when the request carries none
+     */
     private static ServerAuthenticationConverter cookieOrHeaderTokenConverter(String cookieName) {
         ServerBearerTokenAuthenticationConverter header = new ServerBearerTokenAuthenticationConverter();
         return exchange -> {
@@ -107,16 +124,35 @@ public class AuthConfig {
         };
     }
 
+    /**
+     * Derives the HMAC-SHA256 signing key from the configured JWT secret.
+     *
+     * @param props auth settings holding the secret
+     * @return the shared signing key
+     */
     @Bean
     SecretKey jwtSigningKey(AuthProperties props) {
         return new SecretKeySpec(props.jwt().secret().getBytes(StandardCharsets.UTF_8), "HmacSHA256");
     }
 
+    /**
+     * Creates the encoder used to sign access tokens.
+     *
+     * @param jwtSigningKey HMAC key
+     * @return a Nimbus JWT encoder
+     */
     @Bean
     JwtEncoder jwtEncoder(SecretKey jwtSigningKey) {
         return new NimbusJwtEncoder(new ImmutableSecret<>(jwtSigningKey));
     }
 
+    /**
+     * Creates the decoder that verifies HS256 signatures, expiry and the expected issuer.
+     *
+     * @param jwtSigningKey HMAC key
+     * @param props auth settings holding the issuer
+     * @return a reactive JWT decoder
+     */
     @Bean
     ReactiveJwtDecoder jwtDecoder(SecretKey jwtSigningKey, AuthProperties props) {
         NimbusReactiveJwtDecoder decoder = NimbusReactiveJwtDecoder.withSecretKey(jwtSigningKey)

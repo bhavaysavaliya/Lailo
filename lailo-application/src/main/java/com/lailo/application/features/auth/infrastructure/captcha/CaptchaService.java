@@ -5,6 +5,11 @@ import reactor.core.publisher.Mono;
 /** Strategy: swap the built-in image captcha for Turnstile / reCAPTCHA with configuration only. */
 public interface CaptchaService {
 
+    /**
+     * Creates a challenge for the client to display.
+     *
+     * @return provider name plus whatever that provider needs (image and id, or site key)
+     */
     Mono<CaptchaChallenge> issue();
 
     /**

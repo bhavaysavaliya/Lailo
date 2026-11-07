@@ -19,6 +19,16 @@ public record Identifier(IdentifierType type, String value) {
     private static final Pattern IN_MOBILE = Pattern.compile("^[6-9]\\d{9}$");
     private static final Pattern PHONE_SEPARATORS = Pattern.compile("[\\s\\-().]");
 
+    /**
+     * Validates and normalises what the user typed. Input containing {@code @} is an email (lower-cased); anything
+     * else is a phone number, accepted with spaces, dashes, a trunk {@code 0}, a {@code 00} or {@code +} prefix, and
+     * converted to E.164.
+     *
+     * @param raw user input
+     * @param defaultCountryCode country code to assume when none is given, e.g. {@code 91}
+     * @return the normalised identifier
+     * @throws ApiException {@code INVALID_IDENTIFIER} when the input is neither a valid email nor a valid number
+     */
     public static Identifier parse(String raw, String defaultCountryCode) {
         if (raw == null || raw.isBlank()) {
             throw invalid();
@@ -67,11 +77,21 @@ public record Identifier(IdentifierType type, String value) {
                 + value.substring(value.length() - keepEnd);
     }
 
+    /**
+     * Uses the masked value so identifiers never leak into logs.
+     *
+     * @return a log-safe representation
+     */
     @Override
     public String toString() {
         return "Identifier[" + type + ", " + masked() + "]";
     }
 
+    /**
+     * Builds the single error used for every invalid input.
+     *
+     * @return 400 {@code INVALID_IDENTIFIER}
+     */
     private static ApiException invalid() {
         return new ApiException(HttpStatus.BAD_REQUEST, "INVALID_IDENTIFIER",
                 "Enter a valid email address or 10-digit mobile number.");

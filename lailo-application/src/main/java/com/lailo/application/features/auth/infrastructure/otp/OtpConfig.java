@@ -8,10 +8,19 @@ import org.springframework.context.annotation.Configuration;
 
 import java.security.SecureRandom;
 
+/** Wires OTP generation and the fallback delivery channel. */
 @Slf4j
 @Configuration
 public class OtpConfig {
 
+    /**
+     * Chooses the code generator: the fixed development code when {@code lailo.auth.otp.fixed-code} is set
+     * (logging a warning), otherwise uniformly random digits.
+     *
+     * @param props OTP settings
+     * @param random secure random source
+     * @return the generator
+     */
     @Bean
     OtpGenerator otpGenerator(AuthProperties props, SecureRandom random) {
         String fixed = props.otp().fixedCode();

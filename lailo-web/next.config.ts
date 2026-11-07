@@ -26,9 +26,19 @@ const nextConfig: NextConfig = {
       },
     },
   },
+  /**
+   * Proxies `/api/*` to the Spring Boot backend so auth cookies stay first-party.
+   *
+   * @returns the rewrite rules
+   */
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${backendUrl}/api/:path*` }];
   },
+  /**
+   * Adds baseline security headers to every response.
+   *
+   * @returns the header rules
+   */
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

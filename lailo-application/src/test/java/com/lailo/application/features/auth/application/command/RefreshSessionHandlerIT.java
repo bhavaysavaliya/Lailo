@@ -45,14 +45,34 @@ class RefreshSessionHandlerIT extends IntegrationTest {
         return verifyOtp.handle(new VerifyOtpCommand(requestId, "123456", uniqueClient())).block();
     }
 
+    /**
+     * Loads a session by its raw refresh token.
+     *
+     * @param rawToken token as given to the client
+     * @return the session row
+     */
     private UserSession session(String rawToken) {
         return sessions.findByTokenHash(codec.hash(rawToken)).block();
     }
 
+    /**
+     * Extracts the error code from an {@code ApiException}.
+     *
+     * @param e the error signal
+     * @return its code
+     */
     private static String code(Throwable e) {
         return ((ApiException) e).getCode();
     }
 
+    /**
+     * Refreshing rotates the token within the same family.
+     * <ul>
+     *   <li><b>Given</b> a signed-in user</li>
+     *   <li><b>When</b> their refresh token is exchanged</li>
+     *   <li><b>Then</b> a different token is returned; the old session is revoked as ROTATED and points to the new one; the new session shares the family, is active and records the new client IP</li>
+     * </ul>
+     */
     @Test
     void rotatesTokenAndChainsSessionsInTheSameFamily() {
         AuthResult login = signIn();
@@ -71,6 +91,14 @@ class RefreshSessionHandlerIT extends IntegrationTest {
         assertThat(current.getIpAddress()).isEqualTo(client.ipAddress());
     }
 
+    /**
+     * Replaying a rotated token revokes the whole family and records an event.
+     * <ul>
+     *   <li><b>Given</b> a session that has already been rotated once</li>
+     *   <li><b>When</b> the old token is presented again</li>
+     *   <li><b>Then</b> it fails with {@code SESSION_INVALID}; the newest session is revoked as REUSE_DETECTED and can no longer refresh; one SessionReuseDetected event is in the outbox</li>
+     * </ul>
+     */
     @Test
     void replayingARotatedTokenRevokesTheWholeFamilyAndRecordsAnEvent() {
         AuthResult login = signIn();
@@ -89,6 +117,14 @@ class RefreshSessionHandlerIT extends IntegrationTest {
         assertThat(events).isEqualTo(1L);
     }
 
+    /**
+     * Reuse on one device does not affect the user's other devices.
+     * <ul>
+     *   <li><b>Given</b> the same user signed in on two devices (two families)</li>
+     *   <li><b>When</b> device one rotates and then replays its old token</li>
+     *   <li><b>Then</b> device two can still refresh successfully</li>
+     * </ul>
+     */
     @Test
     void otherDevicesSurviveReuseOnOneDevice() {
         AuthResult phone = signIn();
@@ -108,6 +144,14 @@ class RefreshSessionHandlerIT extends IntegrationTest {
                 .verifyComplete();
     }
 
+    /**
+     * An expired session cannot refresh.
+     * <ul>
+     *   <li><b>Given</b> a session whose {@code expires_at} was moved into the past</li>
+     *   <li><b>When</b> its token is presented</li>
+     *   <li><b>Then</b> it fails with {@code SESSION_INVALID} and the session is not marked revoked</li>
+     * </ul>
+     */
     @Test
     void expiredSessionIsRejected() {
         AuthResult login = signIn();
@@ -120,6 +164,14 @@ class RefreshSessionHandlerIT extends IntegrationTest {
         assertThat(session(login.refreshToken()).getRevokedAt()).isNull();
     }
 
+    /**
+     * A blocked user cannot refresh, and the revocation is committed.
+     * <ul>
+     *   <li><b>Given</b> a signed-in user who is then set to BLOCKED</li>
+     *   <li><b>When</b> their token is presented</li>
+     *   <li><b>Then</b> it fails with {@code ACCOUNT_BLOCKED} and the session row is persisted as revoked with reason ACCOUNT_BLOCKED</li>
+     * </ul>
+     */
     @Test
     void blockedUserCannotRefreshAndLosesAllSessionsInFamily() {
         AuthResult login = signIn();
@@ -131,6 +183,14 @@ class RefreshSessionHandlerIT extends IntegrationTest {
         assertThat(session(login.refreshToken()).getRevokedReason()).isEqualTo("ACCOUNT_BLOCKED");
     }
 
+    /**
+     * Unknown and missing tokens are rejected.
+     * <ul>
+     *   <li><b>Given</b> a token that matches no session, and a {@code null} token</li>
+     *   <li><b>When</b> each is presented</li>
+     *   <li><b>Then</b> both fail with {@code SESSION_INVALID}</li>
+     * </ul>
+     */
     @Test
     void unknownOrMissingTokenIsRejected() {
         StepVerifier.create(handler.handle(new RefreshSessionCommand("not-a-real-token", uniqueClient())))
@@ -141,6 +201,14 @@ class RefreshSessionHandlerIT extends IntegrationTest {
                 .verify();
     }
 
+    /**
+     * Parallel refreshes of one token never create more than one live session.
+     * <ul>
+     *   <li><b>Given</b> a signed-in user</li>
+     *   <li><b>When</b> four refreshes with the same token run in parallel</li>
+     *   <li><b>Then</b> at most one succeeds and the family has at most one active session</li>
+     * </ul>
+     */
     @Test
     void concurrentRefreshesWithOneTokenYieldAtMostOneNewSession() {
         AuthResult login = signIn();

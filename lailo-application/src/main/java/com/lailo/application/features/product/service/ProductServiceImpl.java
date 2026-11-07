@@ -9,17 +9,20 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+/** Repository-backed {@link ProductService}. */
 @Service
 @RequiredArgsConstructor
 public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
 
+    /** {@inheritDoc} */
     @Override
     public Flux<ProductDto> getProducts() {
         return productRepository.findAll().map(ProductMapper::toProductDto);
     }
 
+    /** {@inheritDoc} */
     @Override
     public Mono<ProductDto> saveProduct(ProductDto productDto) {
         Product product = ProductMapper.toProduct(productDto);

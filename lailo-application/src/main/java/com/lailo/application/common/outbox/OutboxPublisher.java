@@ -18,6 +18,17 @@ public class OutboxPublisher {
     private final JsonMapper jsonMapper;
     private final Clock clock;
 
+    /**
+     * Serialises an event to JSON and inserts it as a pending outbox row. Must be composed into the same
+     * transaction as the state change it describes.
+     *
+     * @param topic Kafka topic the relay will publish to
+     * @param aggregateType aggregate name, e.g. {@code User}
+     * @param aggregateId aggregate id; becomes the Kafka record key, which keeps per-aggregate ordering
+     * @param eventType event name, sent as the {@code eventType} header
+     * @param event the event payload (a record)
+     * @return the saved outbox row
+     */
     public Mono<OutboxMessage> append(String topic, String aggregateType, String aggregateId,
                                       String eventType, Object event) {
         return Mono.fromCallable(() -> jsonMapper.writeValueAsString(event))

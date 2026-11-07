@@ -2,6 +2,7 @@
 
 import type { CaptchaChallenge } from "@/lib/api/auth";
 
+/** Props for {@link CaptchaField}. */
 type Props = {
   challenge: CaptchaChallenge | null;
   loading: boolean;
@@ -11,6 +12,7 @@ type Props = {
   error?: string;
 };
 
+/** Captcha image with a "New image" button and the answer input (uppercased as the user types). */
 export function CaptchaField({ challenge, loading, value, onChange, onRefresh, error }: Props) {
   return (
     <div className="flex flex-col gap-2">

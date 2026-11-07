@@ -7,6 +7,13 @@ import reactor.core.publisher.Mono;
 /** Development stand-in. Never logs the code itself. */
 @Slf4j
 public class LoggingOtpSender implements OtpSender {
+    /**
+     * Logs that a code was issued (masked destination only) without delivering it.
+     *
+     * @param destination where the code would be sent
+     * @param code the code; deliberately not logged
+     * @return completion signal
+     */
     @Override
     public Mono<Void> send(Identifier destination, String code) {
         return Mono.fromRunnable(() ->

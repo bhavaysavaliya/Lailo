@@ -22,9 +22,11 @@ public final class EmbeddedInfrastructure {
     private static RedisServer redis;
     private static int redisPort;
 
+    /** Not instantiable: static lifecycle holder. */
     private EmbeddedInfrastructure() {
     }
 
+    /** Starts PostgreSQL and Redis once per JVM (later calls are no-ops) and registers a shutdown hook. */
     public static synchronized void start() {
         if (postgres != null) {
             return;
@@ -40,6 +42,7 @@ public final class EmbeddedInfrastructure {
         Runtime.getRuntime().addShutdownHook(new Thread(EmbeddedInfrastructure::stop));
     }
 
+    /** Stops Redis and PostgreSQL when the test JVM exits. */
     private static void stop() {
         try {
             if (redis != null) redis.stop();
@@ -49,14 +52,30 @@ public final class EmbeddedInfrastructure {
         }
     }
 
+    /**
+     * Port of the embedded PostgreSQL.
+     *
+     * @return TCP port
+     */
     public static int postgresPort() {
         return postgres.getPort();
     }
 
+    /**
+     * Port of the embedded Redis.
+     *
+     * @return TCP port (random free port, never the local 6379)
+     */
     public static int redisPort() {
         return redisPort;
     }
 
+    /**
+     * Asks the OS for a free TCP port.
+     *
+     * @return an unused port
+     * @throws IOException if no socket can be opened
+     */
     private static int freePort() throws IOException {
         try (ServerSocket s = new ServerSocket(0)) {
             s.setReuseAddress(true);

@@ -4,6 +4,12 @@ export type IdentifierKind = "email" | "phone" | "unknown";
 const EMAIL = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
 const SEPARATORS = /[\s\-().]/g;
 
+/**
+ * Guesses what the user is typing, to adapt the input (show +91, numeric keyboard).
+ *
+ * @param raw current input
+ * @returns `email` if it has `@` or letters, `phone` if it looks numeric, otherwise `unknown`
+ */
 export function detectKind(raw: string): IdentifierKind {
   const value = raw.trim();
   if (!value) return "unknown";

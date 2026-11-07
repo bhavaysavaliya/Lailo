@@ -50,15 +50,35 @@ class VerifyOtpHandlerIT extends IntegrationTest {
         return requestId;
     }
 
+    /**
+     * Lists the outbox event types recorded for a user, oldest first.
+     *
+     * @param userId aggregate id
+     * @return event type names
+     */
     private List<String> outboxEventTypes(UUID userId) {
         return db.sql("SELECT event_type FROM outbox_messages WHERE aggregate_id = :id ORDER BY created_at")
                 .bind("id", userId.toString()).map(r -> r.get(0, String.class)).all().collectList().block();
     }
 
+    /**
+     * Extracts the error code from an {@code ApiException}.
+     *
+     * @param e the error signal
+     * @return its code
+     */
     private static String code(Throwable e) {
         return ((ApiException) e).getCode();
     }
 
+    /**
+     * A first sign-in creates the user, the session and both events together.
+     * <ul>
+     *   <li><b>Given</b> a pending OTP for a new phone number</li>
+     *   <li><b>When</b> the correct code is verified</li>
+     *   <li><b>Then</b> {@code newUser} is true; the user row is ACTIVE with the phone verified; the session row matches the refresh token's hash, holds the client IP and expires in about 30 days; the outbox has UserRegistered then UserLoggedIn</li>
+     * </ul>
+     */
     @Test
     void firstSignInCreatesUserSessionAndEventsInOneTransaction() {
         String phone = uniquePhone();
@@ -82,6 +102,14 @@ class VerifyOtpHandlerIT extends IntegrationTest {
         assertThat(outboxEventTypes(user.getId())).containsExactly("UserRegistered", "UserLoggedIn");
     }
 
+    /**
+     * A returning user signs in without a second account or registration event.
+     * <ul>
+     *   <li><b>Given</b> an account created by a previous sign-in with an email</li>
+     *   <li><b>When</b> a new OTP for the same email in upper case is verified</li>
+     *   <li><b>Then</b> {@code newUser} is false, the same user id is returned, there is one account for the email and the outbox has one UserRegistered and two UserLoggedIn</li>
+     * </ul>
+     */
     @Test
     void existingUserSignsInWithoutRegistrationEvent() {
         String email = uniqueEmail();
@@ -97,6 +125,14 @@ class VerifyOtpHandlerIT extends IntegrationTest {
         assertThat(accounts).isEqualTo(1L);
     }
 
+    /**
+     * A wrong code counts an attempt.
+     * <ul>
+     *   <li><b>Given</b> a pending OTP with no attempts</li>
+     *   <li><b>When</b> a wrong code is verified</li>
+     *   <li><b>Then</b> it fails with {@code OTP_INVALID} and 4 attempts left, and Redis shows 1 attempt</li>
+     * </ul>
+     */
     @Test
     void wrongCodeIncrementsAttemptsInRedis() {
         String requestId = pendingOtp(uniquePhone(), 0);
@@ -111,6 +147,14 @@ class VerifyOtpHandlerIT extends IntegrationTest {
         assertThat(otpStore.find(requestId).block().attempts()).isEqualTo(1);
     }
 
+    /**
+     * The fifth wrong code burns the OTP.
+     * <ul>
+     *   <li><b>Given</b> a pending OTP with 4 attempts</li>
+     *   <li><b>When</b> a wrong code is verified</li>
+     *   <li><b>Then</b> it fails with {@code OTP_ATTEMPTS_EXCEEDED} and the challenge is deleted</li>
+     * </ul>
+     */
     @Test
     void fifthWrongCodeBurnsTheChallenge() {
         String requestId = pendingOtp(uniquePhone(), 4);
@@ -122,6 +166,14 @@ class VerifyOtpHandlerIT extends IntegrationTest {
         assertThat(otpStore.find(requestId).blockOptional()).isEmpty();
     }
 
+    /**
+     * A locked OTP rejects even the correct code.
+     * <ul>
+     *   <li><b>Given</b> a pending OTP that already has 5 attempts</li>
+     *   <li><b>When</b> the correct code is verified</li>
+     *   <li><b>Then</b> it fails with {@code OTP_ATTEMPTS_EXCEEDED} and no user is created</li>
+     * </ul>
+     */
     @Test
     void lockedChallengeRejectsEvenTheCorrectCode() {
         String phone = uniquePhone();
@@ -134,6 +186,14 @@ class VerifyOtpHandlerIT extends IntegrationTest {
         assertThat(users.findByPhone("+91" + phone).blockOptional()).isEmpty();
     }
 
+    /**
+     * An unknown OTP request is treated as expired.
+     * <ul>
+     *   <li><b>Given</b> a random request id with nothing in Redis</li>
+     *   <li><b>When</b> a code is verified</li>
+     *   <li><b>Then</b> it fails with {@code OTP_EXPIRED}</li>
+     * </ul>
+     */
     @Test
     void unknownRequestIsExpired() {
         StepVerifier.create(handler.handle(new VerifyOtpCommand(UUID.randomUUID().toString(), "123456", uniqueClient())))
@@ -141,6 +201,14 @@ class VerifyOtpHandlerIT extends IntegrationTest {
                 .verify();
     }
 
+    /**
+     * A code can be used only once.
+     * <ul>
+     *   <li><b>Given</b> an OTP that was just verified successfully</li>
+     *   <li><b>When</b> the same request id and code are verified again</li>
+     *   <li><b>Then</b> it fails with {@code OTP_EXPIRED}</li>
+     * </ul>
+     */
     @Test
     void codeIsSingleUse() {
         String requestId = pendingOtp(uniquePhone(), 0);
@@ -151,6 +219,14 @@ class VerifyOtpHandlerIT extends IntegrationTest {
                 .verify();
     }
 
+    /**
+     * Parallel use of one code produces exactly one session.
+     * <ul>
+     *   <li><b>Given</b> a pending OTP for a new phone number</li>
+     *   <li><b>When</b> five verifications with the correct code run in parallel</li>
+     *   <li><b>Then</b> exactly one succeeds and the user has exactly one session</li>
+     * </ul>
+     */
     @Test
     void concurrentVerificationsOfOneCodeProduceExactlyOneSession() {
         String phone = uniquePhone();
@@ -170,6 +246,14 @@ class VerifyOtpHandlerIT extends IntegrationTest {
         assertThat(sessionCount).isEqualTo(1L);
     }
 
+    /**
+     * A blocked account cannot sign in.
+     * <ul>
+     *   <li><b>Given</b> an existing account set to BLOCKED in Postgres</li>
+     *   <li><b>When</b> a new OTP for it is verified</li>
+     *   <li><b>Then</b> it fails with {@code ACCOUNT_BLOCKED} and no new session is created</li>
+     * </ul>
+     */
     @Test
     void blockedAccountCannotSignIn() {
         String email = uniqueEmail();

@@ -10,6 +10,13 @@ final class HandlerRegistry<H> {
 
     private final Map<Class<?>, H> handlers = new HashMap<>();
 
+    /**
+     * Indexes the handlers by the type each one serves.
+     *
+     * @param all every handler bean found in the context
+     * @param keyFn extracts the served type from a handler
+     * @throws IllegalStateException if two handlers declare the same type (fail fast at startup)
+     */
     HandlerRegistry(Collection<? extends H> all, Function<H, Class<?>> keyFn) {
         for (H handler : all) {
             Class<?> key = keyFn.apply(handler);
@@ -21,6 +28,12 @@ final class HandlerRegistry<H> {
         }
     }
 
+    /**
+     * Looks up the handler for an exact type.
+     *
+     * @param type the command or query class
+     * @return the handler, or {@code null} if none is registered
+     */
     H find(Class<?> type) {
         return handlers.get(type);
     }

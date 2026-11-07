@@ -29,6 +29,13 @@ public class CaptchaImageRenderer {
         System.setProperty("java.awt.headless", "true");
     }
 
+    /**
+     * Draws the text with per-glyph rotation, varied fonts and colours, speckle and interference curves.
+     *
+     * @param text the characters to draw
+     * @param rnd random source for the distortions
+     * @return the image as a {@code data:image/png;base64,...} URI
+     */
     public String renderDataUri(String text, RandomGenerator rnd) {
         BufferedImage img = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = img.createGraphics();

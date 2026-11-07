@@ -1,0 +1,104 @@
+# Lailo local infrastructure: PostgreSQL, MongoDB, Redis, Kafka.
+# The backend (lailo-application) and frontend (lailo-web) are NOT containerised; run them on the host as usual.
+#
+#   docker compose up -d          start everything (waits for health checks with --wait)
+#   docker compose ps             status / health
+#   docker compose down           stop (data is kept in named volumes)
+#   docker compose down -v        stop and DELETE all data
+#
+# Host ports default to the standard ones, which the app's dev profile already uses, so no app config changes are
+# needed. They clash with the Homebrew services: stop those first (brew services stop postgresql@17 redis kafka
+# mongodb-community) or override ports, e.g. POSTGRES_PORT=55432 docker compose up -d (then set DB_*_URL to match).
+#
+# Versions are pinned: Postgres and Mongo match the embedded versions used by the backend tests,
+# Redis and Kafka match the Homebrew installs.
+
+name: lailo
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: lailo
+      POSTGRES_USER: lailo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lailo}   # dev-only default; matches application-dev.yaml
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/<major>/docker - mount the parent
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lailo -d lailo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7.0.15
+    # No auth, like the local Homebrew instance (MONGODB_URI=mongodb://localhost:27017/lailo).
+    ports:
+      - "${MONGODB_PORT:-27017}:27017"
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.10.3-alpine
+    # AOF persistence so rate-limit counters and pending OTPs survive a container restart
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:4.4.0
+    # Single-node KRaft (no ZooKeeper). Two client listeners:
+    #   HOST     localhost:9092 - for the Spring Boot app running on your machine
+    #   INTERNAL kafka:29092    - for any container on this network, including the CLI inside this one:
+    #     docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: HOST://:9092,INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:${KAFKA_PORT:-9092},INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: HOST:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics are declared by the app (NewTopic bean), not created implicitly by typos
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  mongodb-data:
+  redis-data:
+  kafka-data:

@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
+/** Issues captchas, rate-limited per IP so the endpoint cannot be used to hammer image rendering. */
 @Component
 @RequiredArgsConstructor
 public class IssueCaptchaHandler implements CommandHandler<IssueCaptchaCommand, CaptchaChallenge> {
@@ -18,6 +19,12 @@ public class IssueCaptchaHandler implements CommandHandler<IssueCaptchaCommand, 
     private final RedisRateLimiter rateLimiter;
     private final AuthProperties props;
 
+    /**
+     * Checks the per-IP captcha quota, then delegates to the configured captcha provider.
+     *
+     * @param cmd the request
+     * @return the challenge, or {@code RATE_LIMITED}
+     */
     @Override
     public Mono<CaptchaChallenge> handle(IssueCaptchaCommand cmd) {
         AuthProperties.RateLimit rl = props.rateLimit();
@@ -25,6 +32,11 @@ public class IssueCaptchaHandler implements CommandHandler<IssueCaptchaCommand, 
                 .flatMap(ok -> ok ? captchaService.issue() : Mono.error(AuthErrors.tooManyRequests(rl.captchaWindow())));
     }
 
+    /**
+     * Serves {@link IssueCaptchaCommand}.
+     *
+     * @return the command class
+     */
     @Override
     public Class<IssueCaptchaCommand> commandType() {
         return IssueCaptchaCommand.class;

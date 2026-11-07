@@ -1,7 +1,7 @@
 # Lailo — Project Memory
 
 > Load this at the start of a session (`@memory.md`) to continue development.
-> Last updated: 2026-11-06. Update the **Status** and **Next steps** sections whenever work lands.
+> Last updated: 2026-11-07. Update the **Status** and **Next steps** sections whenever work lands.
 
 ---
 
@@ -26,8 +26,11 @@ backend turns a prompt into a validated `[{ component, props }]` **UI spec**; `l
 | **Never mock repositories** | Handler/service tests run against embedded databases. Mockito only for true external boundaries (e.g. `OtpSender`, the buses in web slice tests). WireMock for external HTTP. |
 | **Pinned embedded test infra** | Backend tests always use embedded **PostgreSQL 18.6.0** (zonky), **MongoDB 7.0.15** (flapdoodle Spring auto-config, set in `application-test.yaml`), embedded **Redis** (codemonstur), embedded **Kafka** (`@EmbeddedKafka`). No Testcontainers, no local services. Don't change versions without asking. |
 | Test style requested | JUnit 5 + Mockito, MockMvc-style web tests (→ `WebTestClient`, because the app is WebFlux), WireMock, embedded Postgres. Frontend: Playwright (+ Vitest). |
-| Install via Homebrew | If software is missing, install it with `brew`. Docker is installed but its daemon (colima) is normally **not running**: don't rely on it. |
+| Install via Homebrew | If software is missing, install it with `brew`. Docker is installed but its daemon (colima) is normally **stopped** (`colima start` to use it). Tests must never depend on Docker. |
+| Compose = infra only | `compose.yaml` runs Postgres, MongoDB, Redis, Kafka. **Never add the frontend or backend to it** (owner's explicit request). |
 | Dev OTP | Every OTP is **`123456`** in the dev/test profiles until real SMS/email providers are integrated ("later I will integrate external tools"). |
+| **Javadoc on everything** | Every type, constructor and method in `lailo-application` (main **and** test, private and `@Override` included) has Javadoc. Test methods state their condition as a **Given / When / Then** list. Enforced: Checkstyle (`config/checkstyle/javadoc.xml`, Maven `validate`) fails the build on a missing comment; doclint fails it on malformed Javadoc. Avoid raw `<` `>` `&` in Javadoc text; tags (`@param`) go after the list. |
+| **JSDoc on everything (web)** | Every named function, component, hook, method, class, type alias and interface in `lailo-web` (app, e2e and unit tests) has JSDoc; every `test()` / `it()` / `it.each()` has a `- Given / - When / - Then` list. Enforced by `eslint-plugin-jsdoc` in `eslint.config.mjs` (`npx eslint .` fails on a gap). Inline callbacks are exempt. Name object parameter types instead of inline `{...}` types. |
 | Single `.gitignore` | Only the repo-root `.gitignore` exists (module sections inside it). Don't recreate module `.gitignore` files. |
 | Docs | Architecture docs live in `docs/` as **Markdown + PDF**, with Mermaid diagrams. |
 
@@ -59,6 +62,7 @@ Lailo/
 ├── README.md                 product pitch, status, run & test commands
 ├── memory.md                 ← this file
 ├── .gitignore                the ONLY gitignore (sections: repo-wide, Node, lailo-web, lailo-application)
+├── compose.yaml              infra only: postgres:18.6-alpine, mongo:7.0.15, redis:8.10.3-alpine, apache/kafka:4.4.0 (KRaft)
 ├── docs/
 │   ├── ARCHITECTURE.md/.pdf  architecture write-up (13 Mermaid diagrams)
 │   └── tools/                md → PDF renderer (npm install && npm run pdf)
@@ -145,6 +149,8 @@ cd lailo-application && ./mvnw -B spring-boot:run < /dev/null   # :8080, dev pro
 cd lailo-web && npm run dev                                       # :3000
 ```
 
+Alternative to Homebrew services: `colima start && docker compose up -d --wait` (same ports, so stop the brew services first, or override `POSTGRES_PORT` / `MONGODB_PORT` / `REDIS_PORT` / `KAFKA_PORT` and the matching app env vars). Kafka CLI inside the container must use `--bootstrap-server kafka:29092`. Verified 2026-11-07: full sign-in flow, outbox → Kafka → Mongo projection works against the compose stack.
+
 Open `http://localhost:3000/login`, any email or 10-digit mobile, solve captcha, code **123456**.
 To read a captcha answer from a script: `redis-cli GET captcha:<captchaId>`.
 
@@ -154,7 +160,7 @@ To read a captcha answer from a script: `redis-cli GET captcha:<captchaId>`.
 cd lailo-application && ./mvnw test        # unit + web slice + WireMock + context smoke
 cd lailo-application && ./mvnw verify      # + all *IT (embedded Postgres/Mongo/Redis/Kafka)
 cd lailo-web && npm test                   # Vitest
-cd lailo-web && npm run typecheck && npx eslint app components lib e2e proxy.ts
+cd lailo-web && npm run typecheck && npx eslint .   # includes the JSDoc gate
 cd lailo-web && E2E_BASE_URL=http://localhost:3000 npx playwright test          # mocked API, desktop + mobile
 cd lailo-web && E2E_FULLSTACK=1 E2E_BASE_URL=http://localhost:3000 npx playwright test fullstack --project=desktop-chromium
 cd docs/tools && npm install && npm run pdf  # regenerate docs/ARCHITECTURE.pdf after editing the .md
@@ -192,6 +198,10 @@ Adding a backend test that touches persistence: extend `support/IntegrationTest`
 - OTP cells: keep a ref of the latest value; fast typing outruns re-renders.
 - Countdowns: use a deadline + interval (background tabs throttle timers; also needed for Playwright's fake clock).
 - The refresh cookie is path-scoped to `/api/v1/auth`, so `proxy.ts` can't see it; `/login?next=` attempts a silent refresh.
+
+**Javadoc tooling**
+- `./mvnw -B checkstyle:check@javadoc-required` lists missing comments with file:line. Fields are exempt by design.
+- `javac -Xdoclint:all,-missing/private` does *not* disable missing-comment warnings for all access levels; the pom lists groups explicitly (`accessibility,html,reference,syntax/private`).
 
 **Playwright**
 - API mock fixture is `auto: true`, so every spec is mocked unless it's `fullstack.spec.ts`.

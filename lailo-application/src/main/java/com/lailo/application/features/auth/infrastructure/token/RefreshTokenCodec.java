@@ -15,16 +15,32 @@ public class RefreshTokenCodec {
 
     private final SecureRandom random;
 
+    /**
+     * Creates the codec.
+     *
+     * @param random secure random source
+     */
     public RefreshTokenCodec(SecureRandom random) {
         this.random = random;
     }
 
+    /**
+     * Generates a new opaque refresh token.
+     *
+     * @return 32 random bytes, base64url without padding
+     */
     public String newToken() {
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
+    /**
+     * Hashes a token for storage or lookup.
+     *
+     * @param token raw token
+     * @return lowercase hex SHA-256
+     */
     public String hash(String token) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")

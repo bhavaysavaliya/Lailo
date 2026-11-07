@@ -39,10 +39,21 @@ public class UserSession {
     @Version
     private Long version;
 
+    /**
+     * Whether the refresh token has passed its expiry.
+     *
+     * @param now current time
+     * @return {@code true} if {@code expiresAt} is at or before {@code now}
+     */
     public boolean isExpired(Instant now) {
         return !expiresAt.isAfter(now);
     }
 
+    /**
+     * Whether the session was revoked for any reason (rotated, reused, logout, blocked).
+     *
+     * @return {@code true} if {@code revokedAt} is set
+     */
     public boolean isRevoked() {
         return revokedAt != null;
     }

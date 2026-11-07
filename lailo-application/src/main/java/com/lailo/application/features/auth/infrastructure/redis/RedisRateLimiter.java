@@ -34,6 +34,12 @@ public class RedisRateLimiter {
                         : redis.getExpire(k).defaultIfEmpty(cooldown));
     }
 
+    /**
+     * Ends a cooldown early so the next request is allowed immediately.
+     *
+     * @param key cooldown key (without the {@code rl:cd:} prefix)
+     * @return {@code true} if a cooldown was removed
+     */
     public Mono<Boolean> clearCooldown(String key) {
         return redis.delete("rl:cd:" + key).map(n -> n > 0);
     }

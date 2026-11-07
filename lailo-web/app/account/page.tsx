@@ -9,6 +9,13 @@ export const metadata: Metadata = { title: "Your account" };
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8080";
 
+/**
+ * Fetches the signed-in user's profile on the server, sending the access cookie as a bearer token.
+ * Redirects to `/login?next=/account` when there is no token or the API answers 401.
+ *
+ * @returns the profile
+ * @throws Error when the API fails for any other reason (rendered by the error boundary)
+ */
 async function getProfile(): Promise<UserProfile> {
   const token = (await cookies()).get("lailo_at")?.value;
   if (!token) redirect("/login?next=/account");
@@ -23,6 +30,10 @@ async function getProfile(): Promise<UserProfile> {
 
 const dateFormat = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" });
 
+/**
+ * Profile details list (email, mobile, member since, last sign-in). Async server component;
+ * reads cookies, so it must render inside a Suspense boundary.
+ */
 async function Profile() {
   const profile = await getProfile();
   const rows: Array<[string, string]> = [
@@ -43,6 +54,7 @@ async function Profile() {
   );
 }
 
+/** Account page: header with sign-out and the streamed profile. Placeholder until the chat screen exists. */
 export default function AccountPage() {
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-8 px-4 py-12 sm:px-6">

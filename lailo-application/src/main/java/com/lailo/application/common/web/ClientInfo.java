@@ -14,6 +14,13 @@ public record ClientInfo(String ipAddress, String userAgent) {
 
     private static final int MAX_UA = 512;
 
+    /**
+     * Extracts caller metadata from a request.
+     *
+     * @param request the incoming request
+     * @return the client IP (first {@code X-Forwarded-For} hop, else the socket address, else {@code unknown}) and a
+     *         user agent truncated to 512 characters
+     */
     public static ClientInfo from(ServerHttpRequest request) {
         String ip = Optional.ofNullable(request.getHeaders().getFirst("X-Forwarded-For"))
                 .map(h -> h.split(",")[0].trim())

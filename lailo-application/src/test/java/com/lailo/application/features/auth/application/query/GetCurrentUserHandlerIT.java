@@ -26,6 +26,14 @@ class GetCurrentUserHandlerIT extends IntegrationTest {
     @Autowired UserProfileRepository profiles;
     @Autowired UserRepository users;
 
+    /**
+     * The profile is served from the MongoDB read model.
+     * <ul>
+     *   <li><b>Given</b> a profile document in MongoDB</li>
+     *   <li><b>When</b> the profile is queried</li>
+     *   <li><b>Then</b> the view matches the document</li>
+     * </ul>
+     */
     @Test
     void servesTheMongoProjection() {
         String id = UUID.randomUUID().toString();
@@ -37,6 +45,14 @@ class GetCurrentUserHandlerIT extends IntegrationTest {
                 .verifyComplete();
     }
 
+    /**
+     * While the projection is missing, the profile falls back to Postgres.
+     * <ul>
+     *   <li><b>Given</b> a user in Postgres with no MongoDB document</li>
+     *   <li><b>When</b> the profile is queried</li>
+     *   <li><b>Then</b> the view is built from the Postgres row</li>
+     * </ul>
+     */
     @Test
     void fallsBackToPostgresWhileTheProjectionCatchesUp() {
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS); // Postgres timestamp precision
@@ -51,6 +67,14 @@ class GetCurrentUserHandlerIT extends IntegrationTest {
                 .verifyComplete();
     }
 
+    /**
+     * An unknown user is treated as an ended session.
+     * <ul>
+     *   <li><b>Given</b> a random user id present in neither store</li>
+     *   <li><b>When</b> the profile is queried</li>
+     *   <li><b>Then</b> it fails with {@code SESSION_INVALID}</li>
+     * </ul>
+     */
     @Test
     void unknownUserIsTreatedAsAnEndedSession() {
         StepVerifier.create(handler.handle(new GetCurrentUserQuery(UUID.randomUUID())))

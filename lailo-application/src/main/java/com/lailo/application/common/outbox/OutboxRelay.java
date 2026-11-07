@@ -35,6 +35,10 @@ public class OutboxRelay {
     private final Clock clock;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
+    /**
+     * Scheduled entry point: relays one batch per tick. Skips the tick if the previous one is still running
+     * and never lets an exception kill the scheduler thread.
+     */
     @Scheduled(fixedDelayString = "${lailo.outbox.poll-interval:1s}")
     public void relay() {
         if (!running.compareAndSet(false, true)) {
@@ -52,6 +56,12 @@ public class OutboxRelay {
         }
     }
 
+    /**
+     * Locks up to {@code BATCH_SIZE} pending rows (skipping rows locked by other instances), publishes them in
+     * order and marks each one, all inside one transaction.
+     *
+     * @return the number of rows processed in this batch
+     */
     Mono<Long> relayBatch() {
         return repository.lockUnpublished(BATCH_SIZE)
                 .concatMap(this::publish)
@@ -59,6 +69,13 @@ public class OutboxRelay {
                 .as(tx::transactional);
     }
 
+    /**
+     * Publishes one outbox row to Kafka and records the outcome. A failure increments {@code attempts} and
+     * leaves the row pending for the next tick instead of failing the batch.
+     *
+     * @param msg the outbox row to publish
+     * @return {@code true} if Kafka acknowledged the record, {@code false} if it will be retried
+     */
     private Mono<Boolean> publish(OutboxMessage msg) {
         ProducerRecord<String, String> record = new ProducerRecord<>(msg.getTopic(), msg.getAggregateId(), msg.getPayload());
         record.headers().add("eventType", msg.getEventType().getBytes(StandardCharsets.UTF_8));

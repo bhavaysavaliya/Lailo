@@ -7,6 +7,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 
+/** Stores built-in captcha answers in Redis under {@code captcha:{id}}. */
 @Component
 @RequiredArgsConstructor
 public class RedisCaptchaStore {
@@ -14,6 +15,14 @@ public class RedisCaptchaStore {
     private static final String PREFIX = "captcha:";
     private final ReactiveStringRedisTemplate redis;
 
+    /**
+     * Stores an answer with a TTL.
+     *
+     * @param captchaId challenge id
+     * @param answer expected answer (upper case)
+     * @param ttl lifetime
+     * @return {@code true} when stored
+     */
     public Mono<Boolean> save(String captchaId, String answer, Duration ttl) {
         return redis.opsForValue().set(PREFIX + captchaId, answer, ttl);
     }

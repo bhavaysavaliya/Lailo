@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { authApi } from "@/lib/api/auth";
 
+/**
+ * Signs out: revokes the session via the API, then does a full page load to `/login` so no
+ * client state (kept alive by Cache Components' Activity) survives for the next user.
+ */
 export function SignOutButton() {
   const [pending, setPending] = useState(false);
 

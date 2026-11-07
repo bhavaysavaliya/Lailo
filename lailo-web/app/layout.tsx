@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   description: "Shop everyday essentials on Lailo.",
 };
 
+/** Root layout: loads the Onest font and wraps every page in the full-height body. */
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${onest.variable} h-full antialiased`}>

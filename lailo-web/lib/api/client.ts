@@ -6,6 +6,14 @@
  * - On 401 from a protected endpoint, refreshes the session once (single-flight) and retries.
  */
 export class ApiError extends Error {
+  /**
+   * Creates an API error.
+   *
+   * @param status HTTP status (0 for network failures)
+   * @param code stable error code from the server, e.g. `OTP_INVALID`
+   * @param message user-facing message
+   * @param details extra problem properties, e.g. `attemptsLeft` or `errors`
+   */
   constructor(
     public readonly status: number,
     public readonly code: string,
@@ -16,6 +24,11 @@ export class ApiError extends Error {
     this.name = "ApiError";
   }
 
+  /**
+   * Field-level validation messages from a `VALIDATION_FAILED` response.
+   *
+   * @returns field name to message; empty for other errors
+   */
   get fieldErrors(): Record<string, string> {
     return (this.details.errors as Record<string, string> | undefined) ?? {};
   }
@@ -24,6 +37,12 @@ export class ApiError extends Error {
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const AUTH_PREFIX = "/api/v1/auth/";
 
+/**
+ * Reads a cookie visible to JavaScript (only non-HttpOnly cookies such as `XSRF-TOKEN`).
+ *
+ * @param name cookie name
+ * @returns the raw value, or undefined on the server or when absent
+ */
 function readCookie(name: string): string | undefined {
   if (typeof document === "undefined") return undefined;
   return document.cookie
@@ -32,6 +51,11 @@ function readCookie(name: string): string | undefined {
     ?.split("=")[1];
 }
 
+/**
+ * Returns the CSRF token, fetching `/api/v1/auth/csrf` first if the cookie isn't set yet.
+ *
+ * @returns the token, or undefined during server rendering
+ */
 async function ensureCsrfToken(): Promise<string | undefined> {
   if (typeof document === "undefined") return undefined; // server-side callers use bearer tokens, not cookies
   let token = readCookie("XSRF-TOKEN");
@@ -43,6 +67,12 @@ async function ensureCsrfToken(): Promise<string | undefined> {
   return token ? decodeURIComponent(token) : undefined;
 }
 
+/**
+ * Turns a failed response into an {@link ApiError}, using the problem body when there is one.
+ *
+ * @param res the failed response
+ * @returns the error with code, message and details
+ */
 async function toApiError(res: Response): Promise<ApiError> {
   let body: Record<string, unknown> = {};
   try {
@@ -73,6 +103,18 @@ export function refreshSession(): Promise<boolean> {
   return refreshInFlight;
 }
 
+/**
+ * Same-origin JSON request to the Lailo API.
+ *
+ * Adds the CSRF header to state-changing calls, maps problem responses to {@link ApiError}, and on a 401 from a
+ * protected endpoint refreshes the session once and retries.
+ *
+ * @param path API path starting with `/api/`
+ * @param init fetch options
+ * @param retryOn401 whether a 401 may trigger one refresh-and-retry
+ * @returns the parsed JSON body, or undefined for 204
+ * @throws ApiError for non-2xx responses and network failures
+ */
 export async function request<T>(path: string, init: RequestInit = {}, retryOn401 = true): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);

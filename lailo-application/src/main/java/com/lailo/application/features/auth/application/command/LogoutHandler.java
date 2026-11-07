@@ -25,6 +25,13 @@ public class LogoutHandler implements CommandHandler<LogoutCommand, Boolean> {
     private final TransactionalOperator tx;
     private final Clock clock;
 
+    /**
+     * Revokes every session in the presented token's family and appends {@code UserLoggedOut}, in one
+     * transaction. Unknown or already-revoked tokens are a no-op.
+     *
+     * @param cmd the request
+     * @return {@code true} if a live session was revoked, {@code false} otherwise
+     */
     @Override
     public Mono<Boolean> handle(LogoutCommand cmd) {
         if (cmd.refreshToken() == null || cmd.refreshToken().isBlank()) {
@@ -42,6 +49,11 @@ public class LogoutHandler implements CommandHandler<LogoutCommand, Boolean> {
                 .defaultIfEmpty(false);
     }
 
+    /**
+     * Serves {@link LogoutCommand}.
+     *
+     * @return the command class
+     */
     @Override
     public Class<LogoutCommand> commandType() {
         return LogoutCommand.class;

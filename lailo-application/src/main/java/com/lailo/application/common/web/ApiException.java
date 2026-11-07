@@ -16,10 +16,25 @@ public class ApiException extends RuntimeException {
     private final String code;
     private final transient Map<String, Object> details;
 
+    /**
+     * Creates a business error without extra details.
+     *
+     * @param status HTTP status to return
+     * @param code stable machine-readable error code, e.g. {@code OTP_INVALID}
+     * @param message user-facing message (safe to display)
+     */
     public ApiException(HttpStatus status, String code, String message) {
         this(status, code, message, Map.of());
     }
 
+    /**
+     * Creates a business error with extra properties that are added to the problem response.
+     *
+     * @param status HTTP status to return
+     * @param code stable machine-readable error code
+     * @param message user-facing message (safe to display)
+     * @param details extra properties, e.g. {@code attemptsLeft}; must not contain secrets
+     */
     public ApiException(HttpStatus status, String code, String message, Map<String, Object> details) {
         super(message);
         this.status = status;

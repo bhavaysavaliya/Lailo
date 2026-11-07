@@ -18,6 +18,13 @@ public class RedisOtpStore {
     private static final String PREFIX = "otp:req:";
     private final ReactiveStringRedisTemplate redis;
 
+    /**
+     * Saves a challenge as a hash and sets its TTL.
+     *
+     * @param c the challenge
+     * @param ttl lifetime
+     * @return {@code true} when the TTL was applied
+     */
     public Mono<Boolean> save(OtpChallenge c, Duration ttl) {
         String key = PREFIX + c.requestId();
         Map<String, String> fields = Map.of(
@@ -28,6 +35,12 @@ public class RedisOtpStore {
         return redis.opsForHash().putAll(key, fields).then(redis.expire(key, ttl));
     }
 
+    /**
+     * Loads a challenge.
+     *
+     * @param requestId OTP request id
+     * @return the challenge, or empty if unknown or expired
+     */
     public Mono<OtpChallenge> find(String requestId) {
         String key = PREFIX + requestId;
         return redis.<String, String>opsForHash().entries(key)
@@ -39,6 +52,12 @@ public class RedisOtpStore {
                         Integer.parseInt(m.getOrDefault("attempts", "0"))));
     }
 
+    /**
+     * Atomically increments the wrong-attempt counter.
+     *
+     * @param requestId OTP request id
+     * @return the new attempt count
+     */
     public Mono<Long> incrementAttempts(String requestId) {
         return redis.opsForHash().increment(PREFIX + requestId, "attempts", 1);
     }

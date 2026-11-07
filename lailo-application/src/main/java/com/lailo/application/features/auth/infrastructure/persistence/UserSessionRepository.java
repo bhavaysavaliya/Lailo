@@ -9,10 +9,25 @@ import reactor.core.publisher.Mono;
 import java.time.Instant;
 import java.util.UUID;
 
+/** R2DBC repository for refresh-token sessions (table {@code user_sessions}). */
 public interface UserSessionRepository extends ReactiveCrudRepository<UserSession, UUID> {
 
+    /**
+     * Finds a session by the SHA-256 of its refresh token.
+     *
+     * @param tokenHash lowercase hex SHA-256
+     * @return the session, or empty
+     */
     Mono<UserSession> findByTokenHash(String tokenHash);
 
+    /**
+     * Revokes every still-active session in a family.
+     *
+     * @param familyId rotation chain id
+     * @param at revocation time
+     * @param reason why, e.g. {@code LOGOUT} or {@code REUSE_DETECTED}
+     * @return number of sessions revoked
+     */
     @Modifying
     @Query("""
             UPDATE user_sessions

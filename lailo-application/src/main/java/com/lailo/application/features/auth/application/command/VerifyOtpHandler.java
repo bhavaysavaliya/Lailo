@@ -47,6 +47,14 @@ public class VerifyOtpHandler implements CommandHandler<VerifyOtpCommand, AuthRe
     private final TransactionalOperator tx;
     private final Clock clock;
 
+    /**
+     * Loads the challenge, checks the code, then signs in. A duplicate-key error from two simultaneous first
+     * sign-ins is retried once, which then finds the account and logs in.
+     *
+     * @param cmd the request
+     * @return tokens and whether the account is new, or {@code OTP_EXPIRED} / {@code OTP_INVALID} /
+     *         {@code OTP_ATTEMPTS_EXCEEDED} / {@code ACCOUNT_BLOCKED}
+     */
     @Override
     public Mono<AuthResult> handle(VerifyOtpCommand cmd) {
         return otpStore.find(cmd.requestId())
@@ -57,6 +65,14 @@ public class VerifyOtpHandler implements CommandHandler<VerifyOtpCommand, AuthRe
                         .onErrorResume(DataIntegrityViolationException.class, ex -> signIn(challenge.identifier(), cmd)));
     }
 
+    /**
+     * Compares the code in constant time. A match consumes the challenge (only the caller whose delete succeeds
+     * proceeds); a miss increments attempts and burns the challenge at the limit.
+     *
+     * @param challenge stored challenge
+     * @param code code entered by the user
+     * @return the challenge when the code is correct and this caller won the consume
+     */
     private Mono<OtpChallenge> checkCode(OtpChallenge challenge, String code) {
         int max = props.otp().maxVerifyAttempts();
         if (challenge.attempts() >= max) {
@@ -76,6 +92,14 @@ public class VerifyOtpHandler implements CommandHandler<VerifyOtpCommand, AuthRe
                 });
     }
 
+    /**
+     * Finds or creates the user, records the login, creates a session and appends the events, all in one
+     * transaction, then issues the access token.
+     *
+     * @param identifier verified destination
+     * @param cmd the request
+     * @return the sign-in result
+     */
     private Mono<AuthResult> signIn(Identifier identifier, VerifyOtpCommand cmd) {
         Instant now = Instant.now(clock);
         Mono<User> lookup = identifier.type() == IdentifierType.EMAIL
@@ -105,6 +129,15 @@ public class VerifyOtpHandler implements CommandHandler<VerifyOtpCommand, AuthRe
                 .as(tx::transactional);
     }
 
+    /**
+     * Appends {@code UserRegistered} (new accounts only) and {@code UserLoggedIn} to the outbox.
+     *
+     * @param r the resolved user and whether it was just created
+     * @param identifier how the user signed in
+     * @param sessionId the new session's id
+     * @param now event time
+     * @return completion signal
+     */
     private Mono<Void> appendEvents(Resolved r, Identifier identifier, UUID sessionId, Instant now) {
         User u = r.user();
         String userId = u.getId().toString();
@@ -117,9 +150,20 @@ public class VerifyOtpHandler implements CommandHandler<VerifyOtpCommand, AuthRe
                         identifier.type().name(), u.getEmail(), u.getPhone(), now))).then();
     }
 
+    /**
+     * User after find-or-create.
+     *
+     * @param user the saved user
+     * @param isNew {@code true} if the account was created by this sign-in
+     */
     private record Resolved(User user, boolean isNew) {
     }
 
+    /**
+     * Serves {@link VerifyOtpCommand}.
+     *
+     * @return the command class
+     */
     @Override
     public Class<VerifyOtpCommand> commandType() {
         return VerifyOtpCommand.class;

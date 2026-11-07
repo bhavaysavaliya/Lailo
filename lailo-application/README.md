@@ -36,6 +36,10 @@ Integration tests need **no Docker and no local services**. They always run agai
 
 `EmbeddedInfrastructureVersionIT` fails the build if any of these drift.
 
+## Documentation rule
+
+Every type, constructor and method (main and test code, every access level) carries Javadoc; test methods describe the condition they verify as **Given / When / Then**. Checkstyle ([`config/checkstyle/javadoc.xml`](config/checkstyle/javadoc.xml)) enforces this in the `validate` phase, so any `./mvnw` build fails on a missing comment, and javac's doclint fails the build on malformed Javadoc.
+
 ## Authentication design
 
 Passwordless, unified sign-up / sign-in with email **or** mobile number (Amazon / Flipkart style):

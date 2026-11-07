@@ -25,12 +25,26 @@ public class JwtTokenService {
     private final AuthProperties.Jwt cfg;
     private final Clock clock;
 
+    /**
+     * Creates the token service.
+     *
+     * @param encoder JWT encoder holding the signing key
+     * @param props auth settings (issuer, lifetime)
+     * @param clock time source
+     */
     public JwtTokenService(JwtEncoder encoder, AuthProperties props, Clock clock) {
         this.encoder = encoder;
         this.cfg = props.jwt();
         this.clock = clock;
     }
 
+    /**
+     * Issues an HS256 access token for a session.
+     *
+     * @param user token subject
+     * @param sessionId session the token belongs to, written as the {@code sid} claim
+     * @return the token and its expiry
+     */
     public AccessToken issue(User user, UUID sessionId) {
         Instant now = Instant.now(clock);
         Instant exp = now.plus(cfg.accessTokenTtl());

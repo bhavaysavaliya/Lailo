@@ -41,10 +41,24 @@ class SendOtpHandlerIT extends IntegrationTest {
         return id;
     }
 
+    /**
+     * Extracts the error code from an {@code ApiException}.
+     *
+     * @param e the error signal
+     * @return its code
+     */
     private static String code(Throwable e) {
         return ((ApiException) e).getCode();
     }
 
+    /**
+     * A valid request stores a hashed OTP in Redis and delivers it.
+     * <ul>
+     *   <li><b>Given</b> a new phone number and a solved captcha</li>
+     *   <li><b>When</b> the handler runs</li>
+     *   <li><b>Then</b> the masked result is returned; Redis holds the challenge with attempts 0, a 64-char HMAC (not the code) and a TTL of about 5 minutes; the sender receives {@code 123456}; the captcha key is gone</li>
+     * </ul>
+     */
     @Test
     void storesHashedOtpInRedisAndDeliversIt() {
         String phone = uniquePhone();
@@ -68,6 +82,14 @@ class SendOtpHandlerIT extends IntegrationTest {
         assertThat(redis.hasKey("captcha:" + captchaId).block()).as("captcha is single use").isFalse();
     }
 
+    /**
+     * A wrong captcha issues nothing and uses up the captcha.
+     * <ul>
+     *   <li><b>Given</b> a stored captcha and a new email</li>
+     *   <li><b>When</b> a wrong answer is submitted, then the correct one</li>
+     *   <li><b>Then</b> both fail with {@code CAPTCHA_INVALID}, the captcha key is deleted and no OTP is sent</li>
+     * </ul>
+     */
     @Test
     void wrongCaptchaIssuesNothingAndBurnsTheCaptcha() {
         String email = uniqueEmail();
@@ -86,6 +108,14 @@ class SendOtpHandlerIT extends IntegrationTest {
                 .verify();
     }
 
+    /**
+     * A second request within the cooldown is refused.
+     * <ul>
+     *   <li><b>Given</b> an OTP was just sent to an email</li>
+     *   <li><b>When</b> another OTP is requested for it with a new captcha</li>
+     *   <li><b>Then</b> it fails with {@code OTP_RESEND_COOLDOWN} and {@code retryAfterSeconds} between 1 and 30</li>
+     * </ul>
+     */
     @Test
     void secondRequestWithinCooldownIsRejected() {
         String email = uniqueEmail();
@@ -100,6 +130,14 @@ class SendOtpHandlerIT extends IntegrationTest {
                 .verify();
     }
 
+    /**
+     * An IP over its limit is throttled before the captcha is touched.
+     * <ul>
+     *   <li><b>Given</b> the IP's counter in Redis is already at the limit (10)</li>
+     *   <li><b>When</b> an OTP is requested with a valid captcha</li>
+     *   <li><b>Then</b> it fails with {@code RATE_LIMITED} and the captcha is still in Redis</li>
+     * </ul>
+     */
     @Test
     void ipOverItsWindowLimitIsThrottledBeforeCaptchaIsTouched() {
         ClientInfo client = uniqueClient();
@@ -113,6 +151,14 @@ class SendOtpHandlerIT extends IntegrationTest {
         assertThat(redis.hasKey("captcha:" + captchaId).block()).as("captcha untouched").isTrue();
     }
 
+    /**
+     * An identifier over its limit is throttled.
+     * <ul>
+     *   <li><b>Given</b> 5 OTPs were sent to one email (cooldowns cleared between them)</li>
+     *   <li><b>When</b> a 6th is requested</li>
+     *   <li><b>Then</b> it fails with {@code RATE_LIMITED}</li>
+     * </ul>
+     */
     @Test
     void identifierOverItsWindowLimitIsThrottled() {
         String email = uniqueEmail();
@@ -126,6 +172,14 @@ class SendOtpHandlerIT extends IntegrationTest {
                 .verify();
     }
 
+    /**
+     * A malformed identifier fails before any Redis work.
+     * <ul>
+     *   <li><b>Given</b> the input {@code not-a-phone} and a valid captcha</li>
+     *   <li><b>When</b> the handler runs</li>
+     *   <li><b>Then</b> it fails with {@code INVALID_IDENTIFIER} and the captcha is not consumed</li>
+     * </ul>
+     */
     @Test
     void malformedIdentifierIsRejectedWithoutConsumingCaptcha() {
         String captchaId = captcha("AB3CD");
@@ -137,6 +191,14 @@ class SendOtpHandlerIT extends IntegrationTest {
         assertThat(redis.hasKey("captcha:" + captchaId).block()).isTrue();
     }
 
+    /**
+     * Redis key names contain no personal data.
+     * <ul>
+     *   <li><b>Given</b> an OTP has been sent to a new email</li>
+     *   <li><b>When</b> all Redis keys are listed</li>
+     *   <li><b>Then</b> none contains the email or its local part</li>
+     * </ul>
+     */
     @Test
     void redisKeysNeverContainTheRawIdentifier() {
         String email = uniqueEmail();

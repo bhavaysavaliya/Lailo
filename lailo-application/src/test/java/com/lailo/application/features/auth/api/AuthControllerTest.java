@@ -60,12 +60,26 @@ class AuthControllerTest {
     @MockitoBean CommandBus commandBus;
     @MockitoBean QueryBus queryBus;
 
+    /**
+     * Builds a handler result with fixed-looking tokens and realistic expiries.
+     *
+     * @param newUser whether the result represents a first sign-in
+     * @return the result
+     */
     private static AuthResult authResult(boolean newUser) {
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         return new AuthResult(UUID.randomUUID(), newUser, new AccessToken("access.jwt.value", now.plusSeconds(900)),
                 "refresh-token-value", now.plusSeconds(30L * 24 * 3600));
     }
 
+    /**
+     * The captcha endpoint is public, uncacheable and seeds the CSRF cookie.
+     * <ul>
+     *   <li><b>Given</b> the command bus returns a built-in captcha challenge</li>
+     *   <li><b>When</b> an anonymous {@code GET /api/v1/auth/captcha} is made</li>
+     *   <li><b>Then</b> status is 200, {@code Cache-Control: no-store}, an {@code XSRF-TOKEN} cookie is set and the body carries the challenge</li>
+     * </ul>
+     */
     @Test
     void captchaEndpointIsPublicUncachedAndSeedsCsrfCookie() {
         when(commandBus.dispatch(any(IssueCaptchaCommand.class)))
@@ -80,6 +94,14 @@ class AuthControllerTest {
                 .jsonPath("$.provider").isEqualTo("builtin");
     }
 
+    /**
+     * The CSRF endpoint only seeds the token cookie.
+     * <ul>
+     *   <li><b>Given</b> no prior cookies</li>
+     *   <li><b>When</b> {@code GET /api/v1/auth/csrf} is called</li>
+     *   <li><b>Then</b> status is 204, a JavaScript-readable {@code XSRF-TOKEN} cookie is set and no command is dispatched</li>
+     * </ul>
+     */
     @Test
     void csrfEndpointSeedsTokenCookie() {
         client.get().uri("/api/v1/auth/csrf").exchange()
@@ -89,6 +111,14 @@ class AuthControllerTest {
         verifyNoInteractions(commandBus);
     }
 
+    /**
+     * State-changing calls without a CSRF token are refused.
+     * <ul>
+     *   <li><b>Given</b> a valid send-OTP body but no CSRF header</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/otp} is made</li>
+     *   <li><b>Then</b> status is 403 and the command bus is never called</li>
+     * </ul>
+     */
     @Test
     void stateChangingCallsRequireCsrfToken() {
         client.post().uri("/api/v1/auth/otp")
@@ -100,6 +130,14 @@ class AuthControllerTest {
         verifyNoInteractions(commandBus);
     }
 
+    /**
+     * Invalid request bodies return field-level validation errors.
+     * <ul>
+     *   <li><b>Given</b> a body with a blank identifier and blank captcha answer, plus a CSRF token</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/otp} is made</li>
+     *   <li><b>Then</b> status is 400 with {@code code=VALIDATION_FAILED} and messages for {@code identifier} and {@code captchaAnswer}</li>
+     * </ul>
+     */
     @Test
     void validatesRequestBody() {
         client.mutateWith(csrf()).post().uri("/api/v1/auth/otp")
@@ -113,6 +151,14 @@ class AuthControllerTest {
                 .jsonPath("$.errors.captchaAnswer").exists();
     }
 
+    /**
+     * Send-OTP maps the request to a command and returns its result.
+     * <ul>
+     *   <li><b>Given</b> the bus returns a send result and the request has {@code X-Forwarded-For: 203.0.113.7, 10.0.0.1}</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/otp} is made</li>
+     *   <li><b>Then</b> the body carries the request id and masked identifier, and the dispatched command has the raw identifier and client IP {@code 203.0.113.7}</li>
+     * </ul>
+     */
     @Test
     void sendOtpDispatchesCommandWithClientInfo() {
         when(commandBus.dispatch(any(SendOtpCommand.class))).thenReturn(Mono.just(
@@ -134,6 +180,14 @@ class AuthControllerTest {
         assertThat(cmd.getValue().client().ipAddress()).isEqualTo("203.0.113.7");
     }
 
+    /**
+     * Successful verification sets hardened cookies and keeps tokens out of the body.
+     * <ul>
+     *   <li><b>Given</b> the bus returns a sign-in result</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/otp/verify} is made</li>
+     *   <li><b>Then</b> {@code lailo_at} is HttpOnly, Secure, {@code SameSite=Lax}, path {@code /}; {@code lailo_rt} is HttpOnly, {@code SameSite=Strict}, path {@code /api/v1/auth}; the JSON has no token fields</li>
+     * </ul>
+     */
     @Test
     void verifyOtpSetsHardenedCookiesAndKeepsTokensOutOfBody() {
         when(commandBus.dispatch(any(VerifyOtpCommand.class))).thenReturn(Mono.just(authResult(true)));
@@ -156,6 +210,14 @@ class AuthControllerTest {
                 .jsonPath("$.refreshToken").doesNotExist();
     }
 
+    /**
+     * Non-numeric OTPs are rejected by validation.
+     * <ul>
+     *   <li><b>Given</b> an OTP of {@code 12ab56}</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/otp/verify} is made</li>
+     *   <li><b>Then</b> status is 400 with the message {@code The code is numbers only.} for {@code otp}</li>
+     * </ul>
+     */
     @Test
     void rejectsNonNumericOtp() {
         client.mutateWith(csrf()).post().uri("/api/v1/auth/otp/verify")
@@ -166,6 +228,14 @@ class AuthControllerTest {
                 .expectBody().jsonPath("$.errors.otp").isEqualTo("The code is numbers only.");
     }
 
+    /**
+     * Business errors use RFC 9457 problem details with a stable code.
+     * <ul>
+     *   <li><b>Given</b> the bus fails with {@code OTP_INVALID} and 3 attempts left</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/otp/verify} is made</li>
+     *   <li><b>Then</b> status is 401, content type is {@code application/problem+json}, and the body has {@code code}, {@code attemptsLeft} and the user-facing detail</li>
+     * </ul>
+     */
     @Test
     void businessErrorsUseProblemDetailWithStableCode() {
         when(commandBus.dispatch(any(VerifyOtpCommand.class))).thenReturn(Mono.error(AuthErrors.otpInvalid(3)));
@@ -182,6 +252,14 @@ class AuthControllerTest {
                 .jsonPath("$.detail").isEqualTo("Incorrect code. 3 attempts left.");
     }
 
+    /**
+     * Refresh takes the token from the cookie.
+     * <ul>
+     *   <li><b>Given</b> a {@code lailo_rt} cookie and a successful bus result</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/refresh} is made</li>
+     *   <li><b>Then</b> a new {@code lailo_at} cookie is set and the dispatched command carries the cookie's token</li>
+     * </ul>
+     */
     @Test
     void refreshReadsTokenFromCookieOnly() {
         when(commandBus.dispatch(any(RefreshSessionCommand.class))).thenReturn(Mono.just(authResult(false)));
@@ -197,6 +275,14 @@ class AuthControllerTest {
         assertThat(cmd.getValue().refreshToken()).isEqualTo("the-refresh-token");
     }
 
+    /**
+     * A failed refresh clears the auth cookies.
+     * <ul>
+     *   <li><b>Given</b> the bus fails with {@code SESSION_INVALID}</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/refresh} is made</li>
+     *   <li><b>Then</b> status is 401 and {@code lailo_rt} is expired ({@code Max-Age=0})</li>
+     * </ul>
+     */
     @Test
     void failedRefreshClearsCookies() {
         when(commandBus.dispatch(any(RefreshSessionCommand.class))).thenReturn(Mono.error(AuthErrors.sessionInvalid()));
@@ -208,6 +294,14 @@ class AuthControllerTest {
                 .expectCookie().maxAge("lailo_rt", java.time.Duration.ZERO);
     }
 
+    /**
+     * Logout clears both auth cookies.
+     * <ul>
+     *   <li><b>Given</b> a {@code lailo_rt} cookie and a successful logout</li>
+     *   <li><b>When</b> {@code POST /api/v1/auth/logout} is made</li>
+     *   <li><b>Then</b> status is 204 and both cookies are expired</li>
+     * </ul>
+     */
     @Test
     void logoutRevokesAndClearsCookies() {
         when(commandBus.dispatch(any(LogoutCommand.class))).thenReturn(Mono.just(true));
@@ -220,12 +314,28 @@ class AuthControllerTest {
                 .expectCookie().maxAge("lailo_rt", java.time.Duration.ZERO);
     }
 
+    /**
+     * The profile endpoint requires authentication.
+     * <ul>
+     *   <li><b>Given</b> no access token</li>
+     *   <li><b>When</b> {@code GET /api/v1/users/me} is made</li>
+     *   <li><b>Then</b> status is 401 and the query bus is never called</li>
+     * </ul>
+     */
     @Test
     void profileRequiresAuthentication() {
         client.get().uri("/api/v1/users/me").exchange().expectStatus().isUnauthorized();
         verifyNoInteractions(queryBus);
     }
 
+    /**
+     * The profile endpoint accepts an authenticated JWT principal.
+     * <ul>
+     *   <li><b>Given</b> a mocked JWT whose subject is a user id, and a query result for that user</li>
+     *   <li><b>When</b> {@code GET /api/v1/users/me} is made</li>
+     *   <li><b>Then</b> status is 200 with the user's email</li>
+     * </ul>
+     */
     @Test
     void profileAcceptsBearerJwt() {
         UUID id = UUID.randomUUID();
@@ -238,6 +348,14 @@ class AuthControllerTest {
                 .expectBody().jsonPath("$.email").isEqualTo("rahul@example.com");
     }
 
+    /**
+     * Real signed tokens work from the cookie or header; tampered ones do not.
+     * <ul>
+     *   <li><b>Given</b> an access token issued by the real {@code JwtTokenService}</li>
+     *   <li><b>When</b> it is sent as the {@code lailo_at} cookie, then with its signature altered, then as a bearer header</li>
+     *   <li><b>Then</b> the cookie and the header succeed with 200; the tampered token gets 401</li>
+     * </ul>
+     */
     @Test
     void profileAcceptsSignedAccessTokenCookieAndRejectsTamperedOne() {
         User user = User.register(UUID.randomUUID(), new Identifier(IdentifierType.EMAIL, "a@b.co"), Instant.now());
@@ -257,6 +375,14 @@ class AuthControllerTest {
                 .expectStatus().isOk();
     }
 
+    /**
+     * Unexpected errors don't leak internal details.
+     * <ul>
+     *   <li><b>Given</b> the bus fails with an exception whose message contains a secret</li>
+     *   <li><b>When</b> {@code GET /api/v1/auth/captcha} is made</li>
+     *   <li><b>Then</b> status is 500 with {@code code=INTERNAL_ERROR} and a detail that does not contain the secret</li>
+     * </ul>
+     */
     @Test
     void unexpectedErrorsDoNotLeakInternals() {
         when(commandBus.dispatch(any(IssueCaptchaCommand.class)))

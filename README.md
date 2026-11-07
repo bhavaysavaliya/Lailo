@@ -90,6 +90,15 @@ psql -d postgres -c "CREATE ROLE lailo LOGIN PASSWORD 'lailo';"
 createdb -O lailo lailo
 ```
 
+**Or use Docker** for the four services instead of Homebrew (the API and web app still run on your machine):
+
+```bash
+colima start                      # or Docker Desktop
+docker compose up -d --wait       # PostgreSQL 18.6, MongoDB 7.0.15, Redis 8.10, Kafka 4.4 on the standard ports
+```
+
+The containers use the same ports as the Homebrew services, so stop those first (`brew services stop postgresql@17 redis kafka mongodb-community`) or override ports as described at the top of [`compose.yaml`](compose.yaml). `docker compose down` stops them; add `-v` to delete the data.
+
 Start the API (port 8080; the `dev` profile is enabled automatically):
 
 ```bash

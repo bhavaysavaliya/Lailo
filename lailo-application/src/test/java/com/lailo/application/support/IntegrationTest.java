@@ -27,6 +27,12 @@ public abstract class IntegrationTest {
     @MockitoSpyBean
     protected OtpSender otpSender;
 
+    /**
+     * Starts the embedded PostgreSQL and Redis and points R2DBC, Flyway and Redis at them.
+     * MongoDB and Kafka are wired by their own test integrations.
+     *
+     * @param registry dynamic property registry
+     */
     @DynamicPropertySource
     static void infrastructure(DynamicPropertyRegistry registry) {
         EmbeddedInfrastructure.start();
@@ -46,6 +52,11 @@ public abstract class IntegrationTest {
         return new ClientInfo("10." + r.nextInt(256) + "." + r.nextInt(256) + "." + r.nextInt(1, 255), "JUnit");
     }
 
+    /**
+     * Random unique email, so tests never collide on shared database state.
+     *
+     * @return an address under {@code example.com}
+     */
     protected static String uniqueEmail() {
         return "user-" + UUID.randomUUID() + "@example.com";
     }

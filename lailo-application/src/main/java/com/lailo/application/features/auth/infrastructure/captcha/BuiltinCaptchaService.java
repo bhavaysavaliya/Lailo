@@ -28,6 +28,11 @@ public class BuiltinCaptchaService implements CaptchaService {
     private final CaptchaImageRenderer renderer;
     private final SecureRandom random;
 
+    /**
+     * Generates random text, renders it off the event loop and stores the answer in Redis with the configured TTL.
+     *
+     * @return the challenge with a PNG data URI
+     */
     @Override
     public Mono<CaptchaChallenge> issue() {
         String id = UUID.randomUUID().toString();
@@ -39,6 +44,15 @@ public class BuiltinCaptchaService implements CaptchaService {
                                 props.captcha().ttl().toSeconds())));
     }
 
+    /**
+     * Consumes the stored answer (GETDEL) and compares it case-insensitively in constant time. Every attempt,
+     * right or wrong, uses up the challenge.
+     *
+     * @param captchaId the challenge id
+     * @param answer the user's answer
+     * @param remoteIp ignored by this provider
+     * @return {@code true} only for a correct answer to a live, unused challenge
+     */
     @Override
     public Mono<Boolean> verify(String captchaId, String answer, String remoteIp) {
         if (captchaId == null || answer == null || answer.isBlank()) {
@@ -51,6 +65,12 @@ public class BuiltinCaptchaService implements CaptchaService {
                 .defaultIfEmpty(false);
     }
 
+    /**
+     * Builds random captcha text from the unambiguous alphabet.
+     *
+     * @param len number of characters
+     * @return the text
+     */
     private String randomText(int len) {
         StringBuilder sb = new StringBuilder(len);
         for (int i = 0; i < len; i++) {

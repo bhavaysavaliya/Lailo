@@ -19,6 +19,12 @@ public class GetCurrentUserHandler implements QueryHandler<GetCurrentUserQuery, 
     private final UserProfileRepository profiles;
     private final UserRepository users;
 
+    /**
+     * Reads the profile from MongoDB, falling back to PostgreSQL while the projection catches up.
+     *
+     * @param q the query
+     * @return the profile, or {@code SESSION_INVALID} if the user no longer exists
+     */
     @Override
     public Mono<UserProfileView> handle(GetCurrentUserQuery q) {
         return profiles.findById(q.userId().toString())
@@ -29,6 +35,11 @@ public class GetCurrentUserHandler implements QueryHandler<GetCurrentUserQuery, 
                 .switchIfEmpty(Mono.error(AuthErrors.sessionInvalid()));
     }
 
+    /**
+     * Serves {@link GetCurrentUserQuery}.
+     *
+     * @return the query class
+     */
     @Override
     public Class<GetCurrentUserQuery> queryType() {
         return GetCurrentUserQuery.class;

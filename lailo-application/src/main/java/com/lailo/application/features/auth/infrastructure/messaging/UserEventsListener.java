@@ -22,6 +22,12 @@ public class UserEventsListener {
     private final JsonMapper jsonMapper;
     private final UserProfileProjector projector;
 
+    /**
+     * Routes a record by its {@code eventType} header to the projector and waits for the Mongo write. Unknown
+     * types are ignored; failures are retried by the listener container.
+     *
+     * @param record the Kafka record (key = user id, value = event JSON)
+     */
     @KafkaListener(topics = AuthEvents.TOPIC, groupId = "lailo-user-profile-projector")
     public void onMessage(ConsumerRecord<String, String> record) {
         var header = record.headers().lastHeader("eventType");

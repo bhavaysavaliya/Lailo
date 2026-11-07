@@ -33,14 +33,34 @@ class AuthFlowIT extends IntegrationTest {
     @Autowired UserProfileRepository profiles;
     @Autowired DatabaseClient db;
 
+    /**
+     * Captcha response fields used by the test.
+     *
+     * @param captchaId challenge id
+     * @param image PNG data URI
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record Captcha(String captchaId, String image) {
     }
 
+    /**
+     * Send-OTP response fields used by the test.
+     *
+     * @param requestId OTP request id
+     * @param maskedIdentifier destination safe to display
+     * @param identifierType {@code EMAIL} or {@code PHONE}
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record OtpSent(String requestId, String maskedIdentifier, String identifierType) {
     }
 
+    /**
+     * Sign-in response fields used by the test.
+     *
+     * @param userId user id
+     * @param newUser whether the account was just created
+     * @param accessTokenExpiresAt access-token expiry
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record SignIn(String userId, boolean newUser, Instant accessTokenExpiresAt) {
     }
@@ -51,6 +71,11 @@ class AuthFlowIT extends IntegrationTest {
         String access;
         String refresh;
 
+        /**
+         * Fetches a captcha and remembers the cookies it set.
+         *
+         * @return the challenge
+         */
         Captcha captcha() {
             EntityExchangeResult<Captcha> res = client.get().uri("/api/v1/auth/captcha").exchange()
                     .expectStatus().isOk().expectBody(Captcha.class).returnResult();
@@ -59,6 +84,13 @@ class AuthFlowIT extends IntegrationTest {
             return res.getResponseBody();
         }
 
+        /**
+         * Sends a POST with the CSRF header and whatever auth cookies this browser holds.
+         *
+         * @param uri request path
+         * @param body JSON body, or {@code null} for none
+         * @return the response spec for assertions
+         */
         WebTestClient.ResponseSpec post(String uri, Object body) {
             WebTestClient.RequestBodySpec req = client.post().uri(uri)
                     .header("X-XSRF-TOKEN", xsrf)
@@ -68,6 +100,11 @@ class AuthFlowIT extends IntegrationTest {
             return body == null ? req.exchange() : req.contentType(MediaType.APPLICATION_JSON).bodyValue(body).exchange();
         }
 
+        /**
+         * Stores the XSRF, access and refresh cookies from a response, like a browser cookie jar.
+         *
+         * @param res the exchange result
+         */
         void remember(EntityExchangeResult<?> res) {
             Map<String, java.util.List<ResponseCookie>> cookies = res.getResponseCookies();
             if (cookies.containsKey("XSRF-TOKEN")) xsrf = cookies.get("XSRF-TOKEN").getFirst().getValue();
@@ -75,6 +112,12 @@ class AuthFlowIT extends IntegrationTest {
             if (cookies.containsKey("lailo_rt")) refresh = cookies.get("lailo_rt").getFirst().getValue();
         }
 
+        /**
+         * Solves a captcha (answer read from Redis) and requests an OTP.
+         *
+         * @param identifier email or phone to send to
+         * @return the send result
+         */
         OtpSent sendOtp(String identifier) {
             Captcha c = captcha();
             String answer = redis.opsForValue().get("captcha:" + c.captchaId()).block();
@@ -84,6 +127,13 @@ class AuthFlowIT extends IntegrationTest {
             return res.getResponseBody();
         }
 
+        /**
+         * Verifies an OTP and remembers the auth cookies.
+         *
+         * @param requestId OTP request id
+         * @param otp code to submit
+         * @return the sign-in result
+         */
         SignIn verify(String requestId, String otp) {
             EntityExchangeResult<SignIn> res = post("/api/v1/auth/otp/verify", Map.of("requestId", requestId, "otp", otp))
                     .expectStatus().isOk().expectBody(SignIn.class).returnResult();
@@ -93,6 +143,14 @@ class AuthFlowIT extends IntegrationTest {
     }
 
 
+    /**
+     * The whole passwordless lifecycle works across HTTP, Postgres, Redis, Kafka and MongoDB.
+     * <ul>
+     *   <li><b>Given</b> a new email address</li>
+     *   <li><b>When</b> the user signs up, reads their profile, signs in again from a second device with different letter case, refreshes, has the old refresh token replayed by an attacker, and signs out on the second device</li>
+     *   <li><b>Then</b> a new account is created once; the profile is projected to MongoDB via Kafka; the second sign-in reuses the account; rotation issues a new token; the replay revokes the first device's family and records one {@code SessionReuseDetected}; logout revokes the second device</li>
+     * </ul>
+     */
     @Test
     void fullPasswordlessLifecycle() {
         Browser browser = new Browser();
@@ -148,6 +206,14 @@ class AuthFlowIT extends IntegrationTest {
         assertThat(reuseEvents).isEqualTo(1L);
     }
 
+    /**
+     * A phone number signs up after one wrong code, and the code is single use.
+     * <ul>
+     *   <li><b>Given</b> a new 10-digit mobile number</li>
+     *   <li><b>When</b> a wrong code is submitted, then the right one, then the right one again</li>
+     *   <li><b>Then</b> the first gets 401 with 4 attempts left, the second creates the account (stored as {@code +91...}), the third gets 410 {@code OTP_EXPIRED}</li>
+     * </ul>
+     */
     @Test
     void phoneSignUpAndWrongOtpHandling() {
         Browser browser = new Browser();
@@ -173,6 +239,14 @@ class AuthFlowIT extends IntegrationTest {
         assertThat(stored).isEqualTo("+91" + phone);
     }
 
+    /**
+     * A wrong captcha is rejected and the captcha cannot be retried.
+     * <ul>
+     *   <li><b>Given</b> a fresh captcha</li>
+     *   <li><b>When</b> a wrong answer is sent, then the correct answer for the same captcha</li>
+     *   <li><b>Then</b> both requests get 400</li>
+     * </ul>
+     */
     @Test
     void wrongCaptchaIsRejectedAndCannotBeRetried() {
         Browser browser = new Browser();
@@ -187,6 +261,14 @@ class AuthFlowIT extends IntegrationTest {
                 .expectStatus().isBadRequest();
     }
 
+    /**
+     * Resending inside the cooldown is throttled.
+     * <ul>
+     *   <li><b>Given</b> an OTP was just sent to a phone number</li>
+     *   <li><b>When</b> another OTP is requested for the same number with a new captcha</li>
+     *   <li><b>Then</b> status is 429 with {@code OTP_RESEND_COOLDOWN}</li>
+     * </ul>
+     */
     @Test
     void resendIsThrottled() {
         Browser browser = new Browser();
@@ -200,6 +282,14 @@ class AuthFlowIT extends IntegrationTest {
                 .expectBody().jsonPath("$.code").isEqualTo("OTP_RESEND_COOLDOWN");
     }
 
+    /**
+     * Protected and state-changing endpoints reject unauthenticated or CSRF-less calls.
+     * <ul>
+     *   <li><b>Given</b> no cookies and no CSRF token</li>
+     *   <li><b>When</b> {@code GET /api/v1/users/me} and {@code POST /api/v1/auth/otp} are called</li>
+     *   <li><b>Then</b> they get 401 and 403 respectively</li>
+     * </ul>
+     */
     @Test
     void protectedEndpointsRejectAnonymousAndCsrfLessCalls() {
         client.get().uri("/api/v1/users/me").exchange().expectStatus().isUnauthorized();
@@ -214,6 +304,13 @@ class AuthFlowIT extends IntegrationTest {
                 .flatMap(redis::delete).blockLast();
     }
 
+    /**
+     * Polls MongoDB until the Kafka projection has written the user's profile with a login time.
+     *
+     * @param userId user to wait for
+     * @return the projected document
+     * @throws AssertionError if it does not appear within 20 seconds
+     */
     private UserProfileDocument awaitProfile(String userId) {
         Instant deadline = Instant.now().plusSeconds(20);
         while (Instant.now().isBefore(deadline)) {

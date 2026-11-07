@@ -45,6 +45,14 @@ public class RefreshSessionHandler implements CommandHandler<RefreshSessionComma
     private final TransactionalOperator tx;
     private final Clock clock;
 
+    /**
+     * Looks the session up by token hash, then: rotates it if active; revokes the family if the token was
+     * already rotated (reuse); rejects it if expired or otherwise revoked. Concurrent rotations of the same token
+     * lose with {@code SESSION_INVALID} through optimistic locking.
+     *
+     * @param cmd the request
+     * @return the new token pair, or {@code SESSION_INVALID} / {@code ACCOUNT_BLOCKED}
+     */
     @Override
     public Mono<AuthResult> handle(RefreshSessionCommand cmd) {
         if (cmd.refreshToken() == null || cmd.refreshToken().isBlank()) {
@@ -67,6 +75,15 @@ public class RefreshSessionHandler implements CommandHandler<RefreshSessionComma
                 .onErrorMap(OptimisticLockingFailureException.class, ex -> AuthErrors.sessionInvalid());
     }
 
+    /**
+     * Retires the current session and issues its successor in the same family, in one transaction. A blocked
+     * user's family is revoked in its own committed transaction before the error is returned.
+     *
+     * @param current the active session being rotated
+     * @param cmd the request
+     * @param now the rotation time
+     * @return the new token pair
+     */
     private Mono<AuthResult> rotate(UserSession current, RefreshSessionCommand cmd, Instant now) {
         return users.findById(current.getUserId())
                 .switchIfEmpty(Mono.error(AuthErrors.sessionInvalid()))
@@ -89,6 +106,15 @@ public class RefreshSessionHandler implements CommandHandler<RefreshSessionComma
                 });
     }
 
+    /**
+     * Handles presentation of an already-rotated token: revokes the whole family, records
+     * {@code SessionReuseDetected}, commits, then fails.
+     *
+     * @param reused the rotated session whose token was replayed
+     * @param cmd the request (for the caller's IP)
+     * @param now detection time
+     * @return always errors with {@code SESSION_INVALID}
+     */
     private Mono<AuthResult> onReuse(UserSession reused, RefreshSessionCommand cmd, Instant now) {
         log.warn("Refresh token reuse detected for user {} family {} from {}",
                 reused.getUserId(), reused.getFamilyId(), cmd.client().ipAddress());
@@ -101,6 +127,11 @@ public class RefreshSessionHandler implements CommandHandler<RefreshSessionComma
                 .then(Mono.<AuthResult>error(AuthErrors.sessionInvalid()));
     }
 
+    /**
+     * Serves {@link RefreshSessionCommand}.
+     *
+     * @return the command class
+     */
     @Override
     public Class<RefreshSessionCommand> commandType() {
         return RefreshSessionCommand.class;

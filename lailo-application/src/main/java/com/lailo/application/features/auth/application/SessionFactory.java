@@ -21,6 +21,14 @@ public class SessionFactory {
     private final AuthProperties props;
     private final Clock clock;
 
+    /**
+     * Builds a new refresh-token session (not yet saved) with a fresh random token.
+     *
+     * @param user the session owner
+     * @param familyId rotation chain id: a new random id at sign-in, the existing one on rotation
+     * @param client caller IP and user agent, stored for auditing
+     * @return the session entity plus the raw token, which exists only in memory and in the cookie
+     */
     public NewSession create(User user, UUID familyId, ClientInfo client) {
         Instant now = Instant.now(clock);
         String raw = codec.newToken();
@@ -37,7 +45,18 @@ public class SessionFactory {
         return new NewSession(session, raw);
     }
 
+    /**
+     * A session ready to persist together with the raw refresh token to hand to the client.
+     *
+     * @param session entity holding only the token's SHA-256 hash
+     * @param rawToken the token value for the cookie; never persisted
+     */
     public record NewSession(UserSession session, String rawToken) {
+        /**
+         * Prints only the session id, never the token.
+         *
+         * @return a log-safe representation
+         */
         @Override
         public String toString() {
             return "NewSession[" + session.getId() + "]";

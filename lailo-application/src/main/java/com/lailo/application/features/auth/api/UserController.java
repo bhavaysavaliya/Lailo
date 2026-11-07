@@ -13,6 +13,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.UUID;
 
+/** Read endpoints for the signed-in user. Requires a valid access token. */
 @RestController
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
@@ -20,6 +21,12 @@ public class UserController {
 
     private final QueryBus queryBus;
 
+    /**
+     * Returns the signed-in user's profile from the read model.
+     *
+     * @param jwt the verified access token; its subject is the user id
+     * @return the profile
+     */
     @GetMapping("/me")
     public Mono<UserProfileView> me(@AuthenticationPrincipal Jwt jwt) {
         return queryBus.ask(new GetCurrentUserQuery(UUID.fromString(jwt.getSubject())));

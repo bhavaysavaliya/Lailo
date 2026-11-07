@@ -9,11 +9,20 @@ import { ApiError, refreshSession } from "@/lib/api/client";
 import { detectKind, validateIdentifier } from "@/lib/identifier";
 import { safeNextPath } from "@/lib/safe-redirect";
 
+/** The two screens of the flow: enter identifier + captcha, then enter the code. */
 type Step = "identify" | "verify";
+/** Messages shown next to each field, plus a form-level message. */
 type FieldErrors = { identifier?: string; captcha?: string; otp?: string; form?: string };
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
+/**
+ * Unified sign-in / sign-up flow (email or mobile, captcha, OTP).
+ *
+ * Step one validates the identifier locally, solves the captcha and requests a code; step two takes the six-digit
+ * code, auto-submits it and navigates to `?next` (same-site only) or `/account`. Handles silent refresh when the
+ * access token expired, single-use captchas, resend cooldowns and resetting itself after a successful sign-in.
+ */
 export function AuthFlow() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -98,6 +107,11 @@ export function AuthFlow() {
     return () => clearInterval(t);
   }, [resendAt]);
 
+  /**
+   * Starts the resend countdown from now.
+   *
+   * @param seconds cooldown length returned by the API
+   */
   const startCooldown = (seconds: number) => {
     const current = Date.now();
     setNow(current);
@@ -113,6 +127,12 @@ export function AuthFlow() {
     if (step === "verify" && !busy && !confirmed) otpWrapRef.current?.querySelector("input")?.focus();
   }, [step, busy, confirmed, errors.otp]);
 
+  /**
+   * Submits step one: validates locally, then requests an OTP. Maps API error codes to field messages and
+   * always loads a fresh captcha after a failure, because each captcha is single use.
+   *
+   * @param e the form submit event
+   */
   async function sendOtp(e: FormEvent) {
     e.preventDefault();
     const identifierError = validateIdentifier(identifier);
@@ -151,6 +171,12 @@ export function AuthFlow() {
     }
   }
 
+  /**
+   * Submits a code. On success shows the confirmation and navigates; on failure clears the cells and shows the
+   * server's message (attempts left, expired, locked).
+   *
+   * @param code the six digits entered
+   */
   async function verify(code: string) {
     if (!sent || busy) return;
     setBusy(true);
@@ -171,6 +197,11 @@ export function AuthFlow() {
     }
   }
 
+  /**
+   * Returns to step one, keeping the identifier and loading a fresh captcha.
+   *
+   * @param message optional notice to show, e.g. why a new captcha is needed
+   */
   function backToIdentify(message: string | null) {
     setStep("identify");
     setSent(null);

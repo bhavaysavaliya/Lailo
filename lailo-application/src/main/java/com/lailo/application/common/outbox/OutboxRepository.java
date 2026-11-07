@@ -9,6 +9,7 @@ import reactor.core.publisher.Mono;
 import java.time.Instant;
 import java.util.UUID;
 
+/** R2DBC repository for {@link OutboxMessage} rows, with the locking queries the relay needs. */
 public interface OutboxRepository extends ReactiveCrudRepository<OutboxMessage, UUID> {
 
     /** SKIP LOCKED lets several app instances relay concurrently without double-sending a row. */
@@ -21,10 +22,23 @@ public interface OutboxRepository extends ReactiveCrudRepository<OutboxMessage, 
             """)
     Flux<OutboxMessage> lockUnpublished(int limit);
 
+    /**
+     * Marks a row as published.
+     *
+     * @param id outbox row id
+     * @param at publication time
+     * @return number of rows updated (1, or 0 if the id does not exist)
+     */
     @Modifying
     @Query("UPDATE outbox_messages SET published_at = :at, version = version + 1 WHERE id = :id")
     Mono<Integer> markPublished(UUID id, Instant at);
 
+    /**
+     * Records a failed publish attempt; the row stays pending.
+     *
+     * @param id outbox row id
+     * @return number of rows updated
+     */
     @Modifying
     @Query("UPDATE outbox_messages SET attempts = attempts + 1, version = version + 1 WHERE id = :id")
     Mono<Integer> markFailed(UUID id);
