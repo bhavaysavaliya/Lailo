@@ -7,6 +7,11 @@ spring:
     password: ${DB_PASSWORD:lailo}
 
 lailo:
+  storage:
+    # Matches the identity in infra/seaweedfs/s3.json; dev-only credentials.
+    access-key: ${LAILO_STORAGE_ACCESS_KEY:lailo-dev}
+    secret-key: ${LAILO_STORAGE_SECRET_KEY:lailo-dev-secret}
+    create-bucket-if-missing: true   # a fresh SeaweedFS needs no manual setup
   auth:
     otp:
       fixed-code: "123456"   # every OTP is 123456 until an SMS/email provider is integrated

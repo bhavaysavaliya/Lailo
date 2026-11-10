@@ -10,6 +10,10 @@ spring:
     database: lailo_test
 
 lailo:
+  storage:
+    # Endpoint and public base URL are pointed at the stubbed object store by IntegrationTest.
+    access-key: test-access-key
+    secret-key: test-secret-key
   outbox:
     poll-interval: 200ms
   auth:

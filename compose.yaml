@@ -1,4 +1,4 @@
-# Lailo local infrastructure: PostgreSQL, MongoDB, Redis, Kafka.
+# Lailo local infrastructure: PostgreSQL, MongoDB, Redis, Kafka, SeaweedFS (S3-compatible media store).
 # The backend (lailo-application) and frontend (lailo-web) are NOT containerised; run them on the host as usual.
 #
 #   docker compose up -d          start everything (waits for health checks with --wait)
@@ -12,6 +12,11 @@
 #
 # Versions are pinned: Postgres and Mongo match the embedded versions used by the backend tests,
 # Redis and Kafka match the Homebrew installs.
+#
+# SeaweedFS exposes the S3 API on :8333. The backend signs upload URLs against it and the browser PUTs the
+# bytes there directly, so product images and videos never pass through the application. The dev profile
+# creates the `lailo-media` bucket on startup; credentials and the public read policy live in
+# infra/seaweedfs/s3.json.
 
 name: lailo
 
@@ -97,8 +102,40 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.53
+    # One process running master + volume + filer + S3 gateway: the single-node setup SeaweedFS recommends
+    # for development. Ports: 8333 S3 API, 9333 master UI, 8888 filer, 8080 volume.
+    command: >
+      server
+      -dir=/data
+      -ip=seaweedfs
+      -ip.bind=0.0.0.0
+      -master.volumeSizeLimitMB=1024
+      -volume.max=0
+      -filer
+      -s3
+      -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      - "${SEAWEEDFS_S3_PORT:-8333}:8333"
+      - "${SEAWEEDFS_MASTER_PORT:-9333}:9333"
+      - "${SEAWEEDFS_FILER_PORT:-8888}:8888"
+    volumes:
+      - seaweedfs-data:/data
+      - ./infra/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      # The master reports leadership once the whole single-node stack, S3 gateway included, is up.
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:9333/cluster/status | grep -q IsLeader"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   mongodb-data:
   redis-data:
   kafka-data:
+  seaweedfs-data:

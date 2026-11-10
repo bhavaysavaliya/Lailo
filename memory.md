@@ -1,7 +1,7 @@
 # Lailo — Project Memory
 
 > Load this at the start of a session (`@memory.md`) to continue development.
-> Last updated: 2026-11-07. Update the **Status** and **Next steps** sections whenever work lands.
+> Last updated: 2026-11-10 (media storage added same day). Update the **Status** and **Next steps** sections whenever work lands.
 
 ---
 
@@ -31,6 +31,7 @@ backend turns a prompt into a validated `[{ component, props }]` **UI spec**; `l
 | Dev OTP | Every OTP is **`123456`** in the dev/test profiles until real SMS/email providers are integrated ("later I will integrate external tools"). |
 | **Javadoc on everything** | Every type, constructor and method in `lailo-application` (main **and** test, private and `@Override` included) has Javadoc. Test methods state their condition as a **Given / When / Then** list. Enforced: Checkstyle (`config/checkstyle/javadoc.xml`, Maven `validate`) fails the build on a missing comment; doclint fails it on malformed Javadoc. Avoid raw `<` `>` `&` in Javadoc text; tags (`@param`) go after the list. |
 | **JSDoc on everything (web)** | Every named function, component, hook, method, class, type alias and interface in `lailo-web` (app, e2e and unit tests) has JSDoc; every `test()` / `it()` / `it.each()` has a `- Given / - When / - Then` list. Enforced by `eslint-plugin-jsdoc` in `eslint.config.mjs` (`npx eslint .` fails on a gap). Inline callbacks are exempt. Name object parameter types instead of inline `{...}` types. |
+| **Builder, not long constructors** | Java types with roughly 4+ fields carry Lombok `@Builder` (records included) and are built with `X.builder()...build()` everywhere, main and test. Keep normalisation/validation in the record's compact constructor so a builder can't bypass it. Short records (1-3 components) and Jackson-bound request DTOs keep plain constructors. Test fixtures expose a prefilled builder (`ProductFixtures.draft(name, category)`). |
 | Single `.gitignore` | Only the repo-root `.gitignore` exists (module sections inside it). Don't recreate module `.gitignore` files. |
 | Docs | Architecture docs live in `docs/` as **Markdown + PDF**, with Mermaid diagrams. |
 
@@ -46,12 +47,14 @@ backend turns a prompt into a validated `[{ component, props }]` **UI spec**; `l
 | Outbox → Kafka → Mongo `user_profiles` projection | ✅ Done |
 | `/account` page (profile + sign out) | ✅ Done (placeholder until chat exists) |
 | Architecture doc (`docs/ARCHITECTURE.md` + `.pdf`) | ✅ Done |
+| Product catalogue API (CQRS, same pattern as auth) | ✅ Done, backend only, fully tested |
+| Product images + video (SeaweedFS, presigned direct upload) | ✅ Done, backend only, fully tested |
 | **Chat screen as post-login home** | ⏳ Next |
 | UI spec contract + component registry | ⏳ Planned |
-| Product catalogue / search, cart, checkout, orders | ⏳ Planned |
+| Cart, checkout, orders | ⏳ Planned |
 | Real OTP delivery, Turnstile widget in web | ⏳ Planned (backend Turnstile verification already exists) |
 
-Test counts at last run: backend **81** (`./mvnw verify`), Vitest **26**, Playwright mocked **26 passed / 2 skipped**, Playwright full-stack **1**. All green.
+Test counts at last run (2026-11-10): backend **145** (`./mvnw verify`: 68 unit/slice + 77 IT), Vitest **26**, Playwright mocked **26 passed / 2 skipped**, Playwright full-stack **1**. All green.
 
 ---
 
@@ -62,7 +65,8 @@ Lailo/
 ├── README.md                 product pitch, status, run & test commands
 ├── memory.md                 ← this file
 ├── .gitignore                the ONLY gitignore (sections: repo-wide, Node, lailo-web, lailo-application)
-├── compose.yaml              infra only: postgres:18.6-alpine, mongo:7.0.15, redis:8.10.3-alpine, apache/kafka:4.4.0 (KRaft)
+├── compose.yaml              infra only: postgres:18.6-alpine, mongo:7.0.15, redis:8.10.3-alpine, apache/kafka:4.4.0 (KRaft), chrislusf/seaweedfs:4.53 (S3 on :8333)
+├── infra/seaweedfs/s3.json   SeaweedFS identities: anonymous Read on lailo-media, lailo/lailo-dev-secret for the app
 ├── docs/
 │   ├── ARCHITECTURE.md/.pdf  architecture write-up (13 Mermaid diagrams)
 │   └── tools/                md → PDF renderer (npm install && npm run pdf)
@@ -73,6 +77,7 @@ Lailo/
 │   └── src/main/java/com/lailo/application/
 │       ├── common/cqrs       Command, Query, CommandBus, QueryBus, SimpleCommandBus/QueryBus, HandlerRegistry
 │       ├── common/outbox     OutboxMessage, OutboxRepository (FOR UPDATE SKIP LOCKED), OutboxPublisher, OutboxRelay
+│       ├── common/storage    ObjectStorage, S3ObjectStorage (AWS SDK v2 -> SeaweedFS), StorageProperties, StorageConfig
 │       ├── common/web        ApiException, GlobalExceptionHandler (ProblemDetail + code), ClientInfo
 │       ├── features/auth
 │       │   ├── api           AuthController, UserController, AuthCookies, dto/
@@ -80,18 +85,28 @@ Lailo/
 │       │   ├── domain        User, UserSession, Identifier, IdentifierType, UserStatus, event/AuthEvents
 │       │   ├── infrastructure persistence/, redis/, captcha/, otp/, token/, messaging/, readmodel/
 │       │   └── config        AuthProperties (validated record), AuthBeansConfig (Clock, SecureRandom, NewTopic)
-│       ├── features/product  pre-existing sample (owner's code)
+│       ├── features/product  catalogue, same CQRS layout as auth
+│       │   ├── api           ProductController, ProductMediaController, dto/{ProductRequest,MediaUploadRequest}
+│       │   ├── application   ProductErrors, command/{Create,Update,Archive,RequestProductMediaUpload,ConfirmProductMediaUpload,DeleteProductMedia}, query/{GetProduct,SearchProducts,ProductView,ProductMediaView,ProductViewMapper,ProductPage,ProductSort}
+│       │   ├── domain        Product, ProductDetails, ProductStatus, Slug, ProductMedia, MediaType, MediaStatus, MediaKind, MediaKeys, event/ProductEvents
+│       │   ├── infrastructure persistence/{ProductRepository,ProductMediaRepository}, readmodel/{ProductDocument,ProductMediaDocument,ProductCatalogRepository,ProductProjector}, messaging/ProductEventsListener
+│       │   └── config        ProductBeansConfig (NewTopic), MediaProperties
 │       ├── observability     LogsCommonConfig (owner's AOP logging aspect)
 │       └── security/auth/config/AuthConfig.java   filter chain, JWT encoder/decoder, CORS, CSRF
 │   └── src/main/resources/
 │       ├── application.yaml        prod-safe defaults, secrets from env
 │       ├── application-dev.yaml    OTP 123456, insecure cookies, relaxed limits
-│       └── db/migration/V1__create_products.sql, V2__create_auth_tables.sql
+│       └── db/migration/V1__create_products.sql (sample, dropped by V3), V2__create_auth_tables.sql, V3__create_product_catalogue.sql, V4__create_product_media.sql
 │   └── src/test/java/.../
-│       ├── support/          IntegrationTest (base), EmbeddedInfrastructure, EmbeddedInfrastructureVersionIT, TestAuthProperties
+│       ├── support/          IntegrationTest (base; also resets the WireMock object store + givenStoredObject()), EmbeddedInfrastructure (adds objectStorage() WireMock), EmbeddedInfrastructureVersionIT, TestAuthProperties, ProductFixtures
 │       ├── features/auth/AuthFlowIT.java          full HTTP flow
 │       ├── features/auth/application/**/*IT.java  handler tests on real DBs
 │       ├── features/auth/api/AuthControllerTest   WebTestClient slice (buses mocked)
+│       ├── features/product/ProductCatalogFlowIT  full HTTP -> outbox -> Kafka -> Mongo -> search
+│       ├── features/product/**/*IT.java           handler + projector tests on real DBs
+│       ├── features/product/api/ProductControllerTest  WebTestClient slice (buses mocked)
+│       ├── features/product/domain/SlugTest       unit
+│       ├── support/ProductFixtures                details(...) builders + uniqueCategory()
 │       └── .../TurnstileCaptchaServiceTest        WireMock
 └── lailo-web/                Next.js 16.4.5, React 19.3, Tailwind 4, TypeScript
     ├── AGENTS.md             Next 16 agent rules (read node_modules/next/dist/docs before coding)
@@ -120,6 +135,19 @@ POST /api/v1/auth/otp/verify    {requestId, otp} → {userId, newUser, accessTok
 POST /api/v1/auth/refresh       rotates refresh token (cookie only)
 POST /api/v1/auth/logout        revokes session family, clears cookies (204)
 GET  /api/v1/users/me           profile (Mongo read model, falls back to Postgres)
+
+GET    /api/v1/products                 public browse/search: q, category, minPrice, maxPrice, inStock,
+                                        sort=NEWEST|PRICE_ASC|PRICE_DESC|NAME_ASC, page, size (max 100);
+                                        Cache-Control public 60s
+GET    /api/v1/products/{productId}     public single product (Mongo, falls back to Postgres)
+POST   /api/v1/products                 create (any signed-in caller) -> 201 + Location
+PUT    /api/v1/products/{productId}     replace editable details
+DELETE /api/v1/products/{productId}     archive (soft delete, idempotent) -> 204
+
+POST   /api/v1/products/{id}/media              {contentType,sizeBytes} -> presigned PUT ticket (no-store)
+PUT    {uploadUrl}                              client uploads bytes straight to SeaweedFS
+POST   /api/v1/products/{id}/media/{mediaId}    confirm (HEAD-verified) -> publishes to the catalogue
+DELETE /api/v1/products/{id}/media/{mediaId}    remove row + event + object -> 204
 ```
 
 **Key decisions and why**
@@ -133,6 +161,8 @@ GET  /api/v1/users/me           profile (Mongo read model, falls back to Postgre
 - **Cookies**: HttpOnly; access `SameSite=Lax; Path=/`; refresh `SameSite=Strict; Path=/api/v1/auth`. Tokens never in JSON bodies.
 - **CSRF**: `CookieServerCsrfTokenRepository` + plain (non-XOR) handler + a WebFilter that subscribes to the token so the cookie is always set.
 - **Outbox**: `OutboxRelay` polls every 1 s with `FOR UPDATE SKIP LOCKED`, publishes to topic `lailo.auth.user-events.v1` (key = userId, 3 partitions, declared via `NewTopic`), then marks published. `UserEventsListener` → `UserProfileProjector` does idempotent upserts (`$setOnInsert`, `$min`/`$max`).
+- **Catalogue (product feature)**: rewritten from the owner's sample controller/service/repository into the auth CQRS shape. Postgres `products` (V3, which drops the `lailo_products` sample table) + outbox -> topic `lailo.catalog.product-events.v1` -> `ProductProjector` -> Mongo `products`. Events (`ProductCreated/Updated/Archived`) carry **full state**; every projection upsert is guarded by `updatedAt < occurredAt` and the duplicate-key error a guarded upsert raises is swallowed as "stale event". Search reads Mongo only (price stored as Decimal128 via `@Field(targetType=DECIMAL128)` so ranges/sorts are numeric, user text quoted with `Pattern.quote`); single-product read falls back to Postgres for read-your-write. Slug = `name-<id prefix>`, unique by construction, never changed by a rename. Archive is a soft delete; editing an archived product is 409 `PRODUCT_ARCHIVED`. Reads public in `AuthConfig`, writes only `authenticated()` — no seller/admin role exists yet (JWT roles claim is hard-coded `CUSTOMER`).
+- **Product media**: SeaweedFS (S3 API, `chrislusf/seaweedfs:4.53`) via AWS SDK v2 (`software.amazon.awssdk:s3` 2.57.12), path-style access. **Presigned direct upload**: the API signs a PUT (content type + length are in the signature), the client uploads to the store, then confirms; a `HeadObject` verifies the bytes before the row flips PENDING -> READY and `ProductMediaAdded` is appended. Bytes never pass through Spring. Keys are `products/{productId}/{mediaId}.{ext}` (immutable, CDN-cacheable); only the key is stored, URLs are built at read time from `lailo.storage.public-base-url`. Mongo stores media as a **map keyed by media id** ($set/$unset are idempotent; $push would duplicate on redelivery). Media bucket is anonymously readable (shop-window content). Limits: 10 MB image, 300 MB video, 12 per product. `LAILO_STORAGE_ACCESS_KEY`/`SECRET_KEY` are required env vars. Not built yet: thumbnails/derivatives (belong in a `ProductMediaAdded` consumer), multipart upload, pending-upload sweeper.
 - **Captcha strategy**: `BuiltinCaptchaService` (AWT image, default) or `TurnstileCaptchaService` (fails closed), switched by `LAILO_CAPTCHA_PROVIDER`.
 - **Frontend BFF**: browser only calls the Next origin; `/api/*` rewritten to Spring so cookies are first-party. `/account` server component calls the API with `Authorization: Bearer <lailo_at>`.
 - **API client**: echoes CSRF cookie, maps ProblemDetail → `ApiError(code)`, single-flight refresh on 401 then retry.
@@ -148,6 +178,8 @@ brew services start postgresql@17 redis kafka mongodb-community
 cd lailo-application && ./mvnw -B spring-boot:run < /dev/null   # :8080, dev profile auto-enabled
 cd lailo-web && npm run dev                                       # :3000
 ```
+
+SeaweedFS has no Homebrew service here (`brew install seaweedfs` provides `weed`): run `docker compose up -d seaweedfs`, or `weed server -dir=~/.lailo/seaweed -s3 -s3.port=8333 -s3.config=infra/seaweedfs/s3.json`. The dev profile creates the `lailo-media` bucket at startup. Without it, only the media endpoints fail.
 
 Alternative to Homebrew services: `colima start && docker compose up -d --wait` (same ports, so stop the brew services first, or override `POSTGRES_PORT` / `MONGODB_PORT` / `REDIS_PORT` / `KAFKA_PORT` and the matching app env vars). Kafka CLI inside the container must use `--bootstrap-server kafka:29092`. Verified 2026-11-07: full sign-in flow, outbox → Kafka → Mongo projection works against the compose stack.
 
@@ -184,6 +216,12 @@ Adding a backend test that touches persistence: extend `support/IntegrationTest`
 - Test annotations: `org.springframework.boot.webflux.test.autoconfigure.WebFluxTest`, `org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient`, `@MockitoBean` / `@MockitoSpyBean`.
 - Mockito runs as a `-javaagent` (surefire/failsafe argLine via `maven-dependency-plugin:properties`).
 - flapdoodle spring4x rewrites `spring.mongodb.uri` to the embedded server, so the prod `uri` in `application.yaml` is safe.
+
+**Object storage / media**
+- `StorageProperties` requires non-blank credentials, so a context without `lailo.storage.access-key` fails to start (that is how the first test run broke). Test profile sets dummy credentials; `IntegrationTest` points the endpoint at WireMock.
+- A `CommandHandler` must *signal* errors, not throw: validating before the reactive chain made `StepVerifier` throw instead of seeing an error. Wrap eager validation in `Mono.defer`.
+- WireMock's HEAD response may not carry a usable `Content-Length`; `ConfirmProductMediaUploadHandler` falls back to the declared size (which the signature already bound) so `size_bytes > 0` holds.
+- Once a Mongo catalogue document exists it serves the product read, so a just-confirmed image is not in `GET /products/{id}` until the media event is projected (~1s). The confirm response returns the item itself.
 
 **Reactive / transactions**
 - An error inside `.as(tx::transactional)` rolls back everything in it. Commit side effects (e.g. revocations) in their own transaction *before* emitting the error. (Real bug found by switching from mocks to real DBs.)
@@ -227,7 +265,7 @@ Adding a backend test that touches persistence: extend `support/IntegrationTest`
 1. **Chat screen** as the post-login home (replace the `/account` redirect target; keep `/account` reachable).
 2. **UI spec contract**: `[{component, props}]` schema shared by backend and web; a `chat` feature package with a `SendMessageCommand` handler.
 3. **Component registry** in `lailo-web` (start: `ProductGrid`, `ProductCard`, `ComparisonTable`); unknown components ignored; each component tested.
-4. **Catalogue / search** behind the chat (decide data source; existing `features/product` is a sample to replace or grow).
+4. **Catalogue / search** behind the chat: the API exists (`/api/v1/products`, media included); still needed are a seller/admin role for writes, Mongo indexes + a real text index, seed data with real images, and a `ProductMediaAdded` consumer for thumbnails / video posters.
 5. Cart, addresses, checkout as conversational steps; then orders + tracking.
 6. Real `OtpSender` (SMS/email), Turnstile widget in `CaptchaField`, RS256 + JWKS if other services verify tokens.
 7. Replace the default `lailo-web/README.md` (still create-next-app boilerplate).

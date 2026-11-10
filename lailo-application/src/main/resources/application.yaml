@@ -61,6 +61,26 @@ lailo:
     allowed-origins: ${LAILO_WEB_ORIGINS:http://localhost:3000}
   outbox:
     poll-interval: 1s
+  # S3-compatible object store for product media. SeaweedFS locally (compose.yaml) and in production;
+  # any other S3 API (MinIO, AWS S3, R2) works by changing these values only.
+  storage:
+    endpoint: ${LAILO_STORAGE_ENDPOINT:http://localhost:8333}
+    region: ${LAILO_STORAGE_REGION:us-east-1}
+    bucket: ${LAILO_STORAGE_BUCKET:lailo-media}
+    access-key: ${LAILO_STORAGE_ACCESS_KEY}
+    secret-key: ${LAILO_STORAGE_SECRET_KEY}
+    # What browsers fetch media from: put the CDN host here in production.
+    public-base-url: ${LAILO_STORAGE_PUBLIC_BASE_URL:http://localhost:8333/lailo-media}
+    path-style-access: true          # SeaweedFS and MinIO serve every bucket from one host
+    upload-url-ttl: 10m
+    create-bucket-if-missing: false  # production credentials are not allowed to create buckets
+  product:
+    media:
+      image:
+        max-bytes: 10485760          # 10 MB
+      video:
+        max-bytes: 314572800         # 300 MB
+      max-per-product: 12
   auth:
     default-region: IN
     default-country-code: "91"

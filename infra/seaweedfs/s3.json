@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "SeaweedFS S3 identities for local development (mounted by compose.yaml).",
+    "anonymous has Read on the media bucket only: product images and videos are public, exactly like any",
+    "shop window, so a browser or CDN can fetch them with no signature and cache them forever.",
+    "The lailo identity is what the backend signs upload URLs with. Replace both in any shared environment."
+  ],
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": [
+        "Read:lailo-media"
+      ]
+    },
+    {
+      "name": "lailo",
+      "credentials": [
+        {
+          "accessKey": "lailo-dev",
+          "secretKey": "lailo-dev-secret"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "Write",
+        "List",
+        "Tagging"
+      ]
+    }
+  ]
+}

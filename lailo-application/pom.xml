@@ -30,8 +30,12 @@
 	<properties>
 		<java.version>25</java.version>
 		<spring-cloud.version>2025.1.4</spring-cloud.version>
+		<!-- S3 client for the SeaweedFS-compatible object store (product media) -->
+		<aws-sdk.version>2.57.12</aws-sdk.version>
 		<!-- Embedded test infrastructure versions (keep in sync with support/EmbeddedInfrastructure) -->
 		<embedded-postgres-binaries.version>18.6.0</embedded-postgres-binaries.version>
+		<!-- HTML test reports; kept in step with the surefire/failsafe plugins -->
+		<surefire-report.version>3.6.1</surefire-report.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -84,6 +88,11 @@
 		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<!-- S3 API client + presigner; the endpoint is SeaweedFS, not AWS -->
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>s3</artifactId>
 		</dependency>
 
 
@@ -180,6 +189,13 @@
 				<groupId>org.springframework.cloud</groupId>
 				<artifactId>spring-cloud-dependencies</artifactId>
 				<version>${spring-cloud.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+			<dependency>
+				<groupId>software.amazon.awssdk</groupId>
+				<artifactId>bom</artifactId>
+				<version>${aws-sdk.version}</version>
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
@@ -314,6 +330,36 @@
 								</path>
 							</annotationProcessorPaths>
 						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- Browsable HTML test report from the surefire/failsafe XML. Bound to
+			     post-integration-test, which still runs when an *IT fails (failsafe:verify
+			     fails the build later). A *Test failure stops the build at `test`, so for
+			     that case render the report by hand: ./mvnw surefire-report:report-only -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-report-plugin</artifactId>
+				<version>${surefire-report.version}</version>
+				<configuration>
+					<!-- one page covering both unit (*Test) and integration (*IT) runs -->
+					<reportsDirectories>
+						<reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
+						<reportsDirectory>${project.build.directory}/failsafe-reports</reportsDirectory>
+					</reportsDirectories>
+					<outputName>test-report</outputName>
+					<showSuccess>true</showSuccess>
+					<!-- no maven-jxr-plugin in this build, so there is no source XRef to link to -->
+					<linkXRef>false</linkXRef>
+				</configuration>
+				<executions>
+					<execution>
+						<id>test-report</id>
+						<phase>post-integration-test</phase>
+						<goals>
+							<!-- report-only: renders existing XML, never re-runs the tests -->
+							<goal>report-only</goal>
+						</goals>
 					</execution>
 				</executions>
 			</plugin>

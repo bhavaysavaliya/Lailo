@@ -57,7 +57,9 @@ Lailo is early. What exists today:
 | Sessions & security | **Done.** HttpOnly cookies, short-lived access tokens, rotating refresh tokens with reuse detection, CSRF protection, rate limiting. |
 | Chat interface | Planned: the screen users land on after sign-in. |
 | UI spec + component registry | Planned. |
-| Product catalogue, cart, checkout, orders | Planned. |
+| Product catalogue API | **Done (backend).** CQRS create / update / archive, public browse and search, Postgres write model projected to MongoDB through Kafka. No UI yet. |
+| Product images and video | **Done (backend).** Direct-to-storage uploads to SeaweedFS (S3-compatible) with presigned URLs; galleries are part of the catalogue read model. |
+| Cart, checkout, orders | Planned. |
 | OTP delivery (SMS / email) | Planned. In development every code is `123456`. |
 
 ## Repository layout
@@ -66,6 +68,7 @@ Lailo is early. What exists today:
 | --- | --- |
 | [`lailo-application/`](lailo-application) | Backend API: Spring Boot 4 (WebFlux, Java 25). PostgreSQL, MongoDB, Redis, Kafka. See its [README](lailo-application/README.md) for the auth design and API. |
 | [`lailo-web/`](lailo-web) | Web app: Next.js 16, React 19, Tailwind CSS 4. Calls the API through same-origin `/api` rewrites. |
+| [`infra/seaweedfs/`](infra/seaweedfs) | SeaweedFS S3 identities and policy used by `compose.yaml` (public read on the media bucket). |
 | `.claude/skills/`, `skills-lock.json` | Agent skills used while developing (frontend design, React, Spring Boot, JUnit, Playwright). |
 
 ### Architecture in brief

@@ -81,7 +81,8 @@ public class AuthConfig {
                 .authorizeExchange(ex -> ex
                         .pathMatchers("/api/v1/auth/**").permitAll()
                         .pathMatchers("/actuator/health/**", "/actuator/info").permitAll()
-                        .pathMatchers(HttpMethod.GET, "/product/**").permitAll()
+                        // the catalogue is the shop window: browsing needs no account
+                        .pathMatchers(HttpMethod.GET, "/api/v1/products", "/api/v1/products/**").permitAll()
                         .pathMatchers("/api/**").authenticated()
                         .anyExchange().permitAll())
                 .oauth2ResourceServer(rs -> rs

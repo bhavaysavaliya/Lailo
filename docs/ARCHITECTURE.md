@@ -29,14 +29,17 @@ flowchart TB
 
     pg[("PostgreSQL<br/>write model")]
     redis[("Redis<br/>captcha · OTP · rate limits")]
-    kafka{{"Kafka<br/>lailo.auth.user-events.v1"}}
+    kafka{{"Kafka<br/>user + product events"}}
     mongo[("MongoDB<br/>read model")]
+    s3[("SeaweedFS · S3 API<br/>product images · video")]
 
     user --> proxy --> pages
     user -- "fetch /api/..." --> rewrite --> sec --> ctrl --> bus --> handlers
     handlers --> pg
     handlers --> redis
     handlers -. "reads" .-> mongo
+    handlers -. "presign · verify · delete" .-> s3
+    user -- "PUT bytes (presigned)<br/>GET media" --> s3
     relay -- "poll outbox" --> pg
     relay --> kafka --> listener --> mongo
 ```
@@ -48,9 +51,11 @@ flowchart TB
 | PostgreSQL 17 | R2DBC + Flyway | Source of truth: users, sessions, outbox |
 | Redis | Reactive Lettuce | Short-lived state: captchas, OTP challenges, rate-limit counters |
 | Kafka | spring-kafka | Integration events between the write and read sides |
-| MongoDB | Reactive driver | Denormalised read model (`user_profiles`) |
+| MongoDB | Reactive driver | Denormalised read models (`user_profiles`, `products`) |
+| SeaweedFS | AWS SDK v2 (S3 API) | Product images and video; uploads go client → store, never through the API |
 
-Locally, all four services run as Homebrew services. Tests replace them with embedded instances (section 9).
+Locally these run as Homebrew services, or from `compose.yaml` (which also provides SeaweedFS). Tests replace
+them with embedded instances, and the object store with a WireMock stand-in (section 9).
 
 ---
 
@@ -83,10 +88,11 @@ lailo-application/src/main/java/com/lailo/application
 ├── common
 │   ├── cqrs        Command, Query, buses, handler registry
 │   ├── outbox      OutboxMessage, OutboxPublisher, OutboxRelay
+│   ├── storage     ObjectStorage, S3ObjectStorage (SeaweedFS), StorageProperties
 │   └── web         ApiException, ProblemDetail handler, ClientInfo
 ├── features
 │   ├── auth        api · application · domain · infrastructure · config
-│   └── product     (pre-existing sample feature)
+│   └── product     api · application · domain · infrastructure · config (catalogue)
 ├── observability   logging aspect
 └── security        AuthConfig (filter chain, JWT encoder/decoder, CORS)
 ```
@@ -105,9 +111,14 @@ flowchart LR
     cb --> h3["VerifyOtpHandler"]
     cb --> h4["RefreshSessionHandler"]
     cb --> h5["LogoutHandler"]
+    cb --> h6["CreateProductHandler"]
+    cb --> h7["UpdateProductHandler"]
+    cb --> h8["ArchiveProductHandler"]
     qb --> q1["GetCurrentUserHandler"]
-    h2 & h3 & h4 & h5 --> w[("Postgres / Redis<br/>write side")]
-    q1 --> r[("MongoDB<br/>read side")]
+    qb --> q2["GetProductHandler"]
+    qb --> q3["SearchProductsHandler"]
+    h2 & h3 & h4 & h5 & h6 & h7 & h8 --> w[("Postgres / Redis<br/>write side")]
+    q1 & q2 & q3 --> r[("MongoDB<br/>read side")]
 ```
 
 - Handlers register themselves by declaring the type they handle. The bus builds a type → handler index at startup and **fails fast on duplicates**.
@@ -270,6 +281,50 @@ erDiagram
 
 A user must have at least one of email or phone (check constraint). Raw refresh tokens are never stored.
 
+`products` is the catalogue write model (`V3__create_product_catalogue.sql`):
+
+```mermaid
+erDiagram
+    PRODUCTS {
+        uuid id PK
+        varchar slug "unique, name + id prefix, never renamed"
+        varchar name
+        varchar description
+        varchar brand
+        varchar category
+        numeric price "NUMERIC(12,2), CHECK price greater than 0"
+        char currency "INR"
+        integer stock_quantity "CHECK not negative"
+        varchar status "ACTIVE | ARCHIVED"
+        timestamptz created_at
+        timestamptz updated_at
+        bigint version "optimistic lock"
+    }
+```
+
+Archiving is a soft delete: the row stays (orders reference products), only `status` changes.
+
+`product_media` holds one row per image or video. Bytes live in the object store; only metadata is in
+Postgres. A row is `PENDING` from the moment an upload URL is signed and becomes `READY` once the bytes are
+verified, so an abandoned upload can never reach the catalogue:
+
+```mermaid
+erDiagram
+    PRODUCTS ||--o{ PRODUCT_MEDIA : "gallery"
+    PRODUCT_MEDIA {
+        uuid id PK
+        uuid product_id FK
+        varchar type "IMAGE | VIDEO"
+        varchar object_key "unique: products/{productId}/{mediaId}.{ext}"
+        varchar content_type
+        bigint size_bytes
+        varchar status "PENDING | READY"
+        integer position "gallery order"
+        timestamptz created_at
+        timestamptz ready_at
+    }
+```
+
 ### 4.2 Redis — ephemeral state
 
 | Key | Type | TTL | Purpose |
@@ -286,6 +341,63 @@ Identifiers are hashed in key names, so a Redis key dump contains no emails or p
 ### 4.3 MongoDB — read model
 
 `user_profiles` holds one document per user (`_id`, email, phone, registeredAt, lastLoginAt, lastLoginMethod), built only from events (section 5). It is what `GET /api/v1/users/me` reads.
+
+`products` holds one document per catalogue entry (`_id`, slug, name, description, brand, category, price as
+Decimal128, currency, stockQuantity, status, createdAt, updatedAt), built only from product events. It is what
+`GET /api/v1/products` searches: filters on text, category, price range and stock, with paging and sorting, in a
+single query and no joins. Price is stored as Decimal128 rather than a string so range filters and ordering are
+numeric. Media is a **map keyed by media id**, not an array, so projecting one item is an
+idempotent `$set` and removing it an `$unset`; the gallery is ordered by each item's position when the view is
+built. Only object keys are stored, never URLs.
+
+---
+
+### 4.4 Object storage — product media
+
+Product images and video live in **SeaweedFS**, an open-source store that speaks the S3 API, so the same code
+runs against MinIO, AWS S3 or R2 by changing configuration only. The bytes never pass through the
+application: the API signs a URL, the client uploads to the store, and the API verifies afterwards.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client (seller tool)
+    participant A as lailo-application
+    participant PG as PostgreSQL
+    participant S as SeaweedFS (S3)
+    participant K as Kafka
+    participant M as MongoDB
+
+    C->>A: POST /products/{id}/media {contentType, sizeBytes}
+    A->>A: validate type, size, gallery cap
+    A->>PG: INSERT product_media (PENDING)
+    A->>A: sign PUT URL (local, no I/O)
+    A-->>C: uploadUrl + required headers + confirmUrl
+    C->>S: PUT bytes (signature binds type and length)
+    S-->>C: 200
+    C->>A: POST /products/{id}/media/{mediaId}
+    A->>S: HeadObject (does it exist? is it what we signed?)
+    S-->>A: content type, size, ETag
+    Note over A,PG: one transaction
+    A->>PG: UPDATE product_media -> READY
+    A->>PG: INSERT outbox (ProductMediaAdded)
+    A-->>C: gallery item + public URL
+    PG->>K: relay publishes
+    K->>M: projector $set media.{mediaId}
+    actor U as Shopper
+    U->>S: GET media URL (public, CDN-cacheable)
+```
+
+| Decision | Reason |
+| --- | --- |
+| Presigned direct upload, not a proxied multipart endpoint | A 300 MB video would otherwise occupy a request thread and be buffered twice. One hop, and the store does the slow part |
+| Content type and length are part of the signature | The store rejects a client that uploads something other than what it declared, so limits cannot be talked around |
+| Two-phase publish (`PENDING` → `READY`) | Only verified bytes become catalogue content; an abandoned upload leaves a sweepable row, never a gallery entry that 404s |
+| Store the object key, never a URL | `lailo.storage.public-base-url` is applied when the view is built, so moving media behind a CDN needs no reprojection |
+| Immutable keys `products/{productId}/{mediaId}.{ext}` | URLs are cacheable forever and one product's media shares one prefix, so cleanup is a prefix delete |
+| Media bucket is anonymously readable | Shop-window content: a browser or CDN fetches it with no signature. Presigning every gallery URL would defeat caching |
+| Media as a map in MongoDB, keyed by media id | `$set` / `$unset` are idempotent; a `$push` would duplicate the item when Kafka redelivers |
+| Derivatives (thumbnails, posters) are not generated yet | They belong in a consumer of `ProductMediaAdded`, off the request path. Noted in section 10 |
 
 ---
 
@@ -318,7 +430,18 @@ flowchart TB
 
 **Eventual consistency.** The projection lags the write by about a second. Right after sign-up, `GetCurrentUserHandler` falls back to Postgres when the Mongo document does not exist yet, so the account page never shows an empty profile.
 
-Events published today: `UserRegistered`, `UserLoggedIn`, `UserLoggedOut`, `SessionReuseDetected`.
+The same machinery carries the catalogue: product handlers append to the same `outbox_messages` table, the same
+relay publishes to **`lailo.catalog.product-events.v1`** (key = product id), and `ProductEventsListener` →
+`ProductProjector` maintains the MongoDB `products` collection. There, re-delivery safety works differently:
+product events carry the full state, so every upsert is guarded by `updatedAt < occurredAt` and a stale event is
+dropped (the duplicate-key error that an upsert then raises is the signal, and is swallowed).
+
+Events published today:
+
+| Aggregate | Topic | Events |
+| --- | --- | --- |
+| `User` | `lailo.auth.user-events.v1` | `UserRegistered`, `UserLoggedIn`, `UserLoggedOut`, `SessionReuseDetected` |
+| `Product` | `lailo.catalog.product-events.v1` | `ProductCreated`, `ProductUpdated`, `ProductArchived`, `ProductMediaAdded`, `ProductMediaRemoved` |
 
 ---
 
@@ -431,6 +554,7 @@ flowchart TB
         ers[("Redis")]
         emg[("MongoDB<br/>7.0.15")]
         ekf{{"Kafka"}}
+        es3[("Object store<br/>WireMock stand-in")]
     end
     subgraph fe["Frontend · npm test / test:e2e"]
         direction LR
@@ -438,7 +562,7 @@ flowchart TB
         pw["Playwright<br/>mocked API"]
         fs["Playwright<br/>full stack"]
     end
-    it --> epg & ers & emg & ekf
+    it --> epg & ers & emg & ekf & es3
     emb ~~~ fe
 ```
 
@@ -449,8 +573,9 @@ flowchart TB
 | Pinned embedded versions, guarded by `EmbeddedInfrastructureVersionIT` | A dependency bump cannot silently change the database version under test |
 | One shared Spring context for all integration tests | Fast suite; tests isolate themselves with unique identifiers and IPs |
 | Concurrency tests (parallel OTP verification, parallel refresh) | The security guarantees are only meaningful under races |
+| The object store is stubbed with WireMock, not embedded | It is reached only over HTTP, so it is an external boundary like Cloudflare. Presigning is local signing and needs no server; the full-stack media test still performs a real PUT to the stand-in |
 
-Current suite: 81 backend tests, 26 Vitest tests, 26 mocked Playwright tests, and 1 full-stack Playwright test.
+Current suite: 145 backend tests, 26 Vitest tests, 26 mocked Playwright tests, and 1 full-stack Playwright test.
 
 ---
 
@@ -462,6 +587,9 @@ Current suite: 81 backend tests, 26 Vitest tests, 26 mocked Playwright tests, an
 | Production captcha | `LAILO_CAPTCHA_PROVIDER=turnstile`, plus the widget in `CaptchaField` |
 | Other services verifying JWTs | Move from HS256 to RS256/ES256 and publish a JWKS endpoint |
 | New read models (orders, recommendations) | Consume `lailo.auth.user-events.v1` or new topics; the outbox works for any aggregate |
+| Image / video derivatives | A consumer of `ProductMediaAdded`: thumbnails, WebP/AVIF variants, video posters - generated off the request path |
+| Media CDN | Point `lailo.storage.public-base-url` at the CDN; keys are immutable, so cache forever |
+| Very large videos | Add S3 multipart upload (presign per part) behind `ObjectStorage` |
 | Chat + generative UI | New feature package: a command that turns a prompt into a validated `[{component, props}]` spec, rendered by a component registry in `lailo-web` |
 
 ## 11. Known trade-offs
@@ -469,4 +597,6 @@ Current suite: 81 backend tests, 26 Vitest tests, 26 mocked Playwright tests, an
 - **Two tabs refreshing at the same instant** may trigger reuse detection and sign the user out. The web client's single-flight refresh prevents this within one tab; a short grace window is a possible later addition.
 - **HS256** suits a single backend; it becomes a liability once other services need to verify tokens.
 - **The polling outbox relay** adds up to a second of latency. Change data capture (e.g. Debezium) is the scaling path.
+- **Media follows the same projection lag.** Once a catalogue document exists it serves the product read, so a just-confirmed image appears there about a second later. The confirm response already returns the item, so the uploader never has to wait for it.
+- **A failed object delete leaves an orphan blob**, because the row and its event commit before the store is touched. That is the safer failure (no gallery entry pointing at nothing) and a prefix sweep cleans it up.
 - **The client IP** is taken from the first `X-Forwarded-For` hop, which is only trustworthy behind a proxy that overwrites that header.
