@@ -163,7 +163,11 @@ Cloudflare. Presigning needs no server at all, since it is local signing.
 
 | Concern | Where | Change |
 | --- | --- | --- |
-| SMS / email delivery | `OtpSender` | Add a bean (MSG91, Twilio, SES…). `LoggingOtpSender` is only the dev fallback. |
+| SMS / email delivery | `EmailSender`, `MessageSender` | Add one bean per channel (SES, Postmark, MSG91, Twilio). They are shared by every feature - OTPs, order confirmations, receipts - so configuring them once covers all of it. The logging adapters are only the dev fallback. |
+| Payment provider | `PaymentGateway` | Add a bean (Razorpay, Cashfree, Stripe). `SimulatedPaymentGateway` warns loudly at startup and must never run outside dev or tests. |
+| Webhook secret | `LAILO_PAYMENT_WEBHOOK_SECRET` | Required env var: provider callbacks are authenticated by that signature alone. |
+| Stuck sagas | `saga_instances` | Alert on rows left `RUNNING` or `COMPENSATING` (`ix_saga_instances_unfinished`), and on `COMPENSATION_FAILED` - that one means stock or money needs a human. |
+| Undelivered notifications | `notification_deliveries` | Alert on or retry rows left `FAILED` (`ix_notification_deliveries_failed`). |
 | Real OTPs | `lailo.auth.otp.fixed-code` | Already blank by default; only `application-dev.yaml` sets `123456`. |
 | Captcha | `LAILO_CAPTCHA_PROVIDER=turnstile` | `TurnstileCaptchaService` is implemented and WireMock-tested; the web app needs the Turnstile widget. |
 | Secrets | `LAILO_JWT_SECRET`, `LAILO_OTP_HASH_SECRET`, DB/Mongo creds | Required env vars; startup fails without them outside `dev`. |
@@ -173,3 +177,102 @@ Cloudflare. Presigning needs no server at all, since it is local signing.
 | Image / video derivatives | new consumer of `lailo.catalog.product-events.v1` | Generate thumbnails, WebP/AVIF variants and video posters off `ProductMediaAdded` instead of on the request path. |
 | Very large videos | `ObjectStorage` | Add S3 multipart upload (presign each part) when single-PUT uploads stop being enough. |
 | Abandoned uploads | `product_media` | Sweep rows that are still `PENDING` after a while, plus their objects (`ix_product_media_pending`). |
+
+
+## Cart, wishlist, orders and payments
+
+Same CQRS shape as auth and the catalogue: controllers build commands and queries, one handler per use case,
+PostgreSQL write model, transactional outbox to Kafka, MongoDB where a read genuinely benefits from it.
+
+```
+GET    /api/v1/cart                                 the caller's cart, priced live from the catalogue
+POST   /api/v1/cart/items          {productId, quantity}  add (a repeat add raises the line)
+PUT    /api/v1/cart/items/{productId}  {quantity}   set a line to an exact quantity
+DELETE /api/v1/cart/items/{productId}               remove a line
+DELETE /api/v1/cart                                 empty it (idempotent) -> 204
+
+GET    /api/v1/wishlist                             saved products with live stock and availability
+POST   /api/v1/wishlist/items       {productId, note?}    save (idempotent; a repeat only updates the note)
+DELETE /api/v1/wishlist/items/{productId}           unsave
+POST   /api/v1/wishlist/items/{productId}/move-to-cart    one step, returns both lists
+
+POST   /api/v1/orders              {address, paymentMethod}  checkout -> 201 + Location
+GET    /api/v1/orders?bucket=TO_BE_SHIPPED|SHIPPED|CANCELLED|ALL&page&size
+GET    /api/v1/orders/{orderId}                     one order (read-your-write)
+POST   /api/v1/orders/{orderId}/cancel              -> 204; stock and refund follow asynchronously
+POST   /api/v1/orders/{orderId}/fulfilment  {target, courierName?, trackingNumber?, expectedDeliveryDate?}
+
+GET    /api/v1/payments/{paymentId}                 one attempt
+POST   /api/v1/payments/{paymentId}/confirm         settle it against the gateway
+POST   /api/v1/payments/webhook                     provider callback: public, CSRF-exempt, signature-authenticated
+```
+
+Everything but the webhook is scoped to the caller by the user id in the access token; a foreign order or
+payment answers the same 404 as a missing one, so ids cannot be probed.
+
+### Shipped and to be shipped
+
+`OrderBucket` owns the rule, in one place, so the API, the read model and the fulfilment index cannot drift:
+
+| Bucket | Statuses | Meaning |
+| --- | --- | --- |
+| `TO_BE_SHIPPED` | `PENDING_PAYMENT`, `CONFIRMED`, `PACKED` | still in the warehouse |
+| `SHIPPED` | `SHIPPED`, `DELIVERED` | with the courier; a delivered order stays here rather than vanishing |
+| `CANCELLED` | `CANCELLED` | called off before dispatch |
+
+The projector stores the derived `bucket` on each order document, so listing a tab is one indexed equality
+match instead of an `$in` over a status list the client would have to know. Every page also carries the counts
+for all three tabs, so the UI can label "To be shipped (2)" without a second round trip.
+
+### Checkout saga
+
+Checkout spans three things that cannot share a transaction: the order (Postgres), product stock (a different
+aggregate with its own consistency rule) and the payment (a third party). `PlaceOrderHandler` therefore commits
+only what must be atomic with the order existing - the order, its snapshotted lines, the emptied cart and the
+`OrderPlaced` event - and `CheckoutSaga` drives the rest off that event.
+
+```
+OrderPlaced        -> reserve stock          -> STOCK_PENDING -> PAYMENT_PENDING
+                      (short of stock)       -> cancel order  -> COMPENSATED
+PAYMENT_PENDING    -> initiate payment
+PaymentInitiated   -> attach payment to the order
+PaymentAuthorized  -> confirm order          -> COMPLETED
+PaymentFailed      -> cancel order
+OrderCancelled     -> release stock, refund  -> RELEASING     -> COMPENSATED
+```
+
+- **Idempotency is the step, not the offset.** Every forward move is a conditional `UPDATE` on
+  `saga_instances.step`; a redelivered event finds the saga already past that step and does nothing. That is
+  what stops a second payment being taken, not the consumer's commit position.
+- **Overselling is prevented by the database.** `reserveStock` is a single `UPDATE … WHERE stock_quantity >=
+  :quantity`, so two shoppers racing for the last unit are serialised by the row lock and one is told it is
+  gone. All lines of an order share a transaction, so a partially reserved order cannot exist.
+- **Compensation is claimed once.** The move to `RELEASING` is one-shot, because releasing the same units
+  twice would invent stock. The price is that a compensation which genuinely fails is recorded as
+  `COMPENSATION_FAILED` for an operator rather than retried forever.
+- **Prices come from the server.** Checkout reads the cart, which prices itself live from the catalogue, so a
+  client can neither choose what it pays nor rely on a stale price.
+- **Snapshots.** Order lines copy name, image and price at checkout and are never refreshed; an invoice has to
+  keep describing itself truthfully after the product is renamed, repriced or removed.
+
+### Notifications
+
+`EmailSender` and `MessageSender` are one shared pair of ports in `common/notification`, used by every feature
+- auth OTPs go out through exactly the same two beans as order confirmations. `NotificationDispatcher` fans a
+rendered message out to whichever channels the recipient can be reached on and makes the whole thing
+idempotent: a claim row keyed by `(dedupe_key, channel)` turns at-least-once event delivery into
+exactly-once-per-channel, so a redelivered `OrderPlaced` cannot produce a second "order placed" text.
+
+Order notifications are a **consumer**, not a step inside the request: a slow provider must not fail - or hold
+a transaction open across - the call that places an order, and sending from the committed event means a
+notification is never sent for an order that rolled back nor missed for one that committed. It has its own
+consumer group, so a notification problem never stalls the orders list or the payment flow.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `lailo.checkout.shipping-fee` | `49.00` | delivery charge below the threshold |
+| `lailo.checkout.free-shipping-threshold` | `499.00` | basket value at or above which delivery is free |
+| `lailo.checkout.cod-enabled` | `true` | whether cash on delivery may be chosen |
+| `lailo.payment.provider` | `simulated` | gateway adapter to wire |
+| `lailo.payment.webhook-secret` | *(required)* | secret the provider signs callbacks with |
+| `lailo.notification.brand-name` / `from-email` / `web-base-url` | `Lailo` / `no-reply@lailo.in` / `localhost:3000` | what every template puts in subjects, signatures and links |

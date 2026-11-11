@@ -8,14 +8,40 @@ de:
 spring:
   mongodb:
     database: lailo_test
+  r2dbc:
+    pool:
+      # Fail fast instead of waiting forever for a connection, so an exhausted pool shows up as an error
+      # naming the pool rather than as a test that mysteriously times out.
+      max-acquire-time: 10s
 
 lailo:
+  # @EmbeddedKafka pre-creates every topic with one partition, while the NewTopic beans ask for three.
+  # Letting the admin client then add partitions to a running embedded broker makes it reconcile partition
+  # state mid-run, which shows up as consumer lag and flaky projections once several consumer groups are
+  # active. Declaring one partition here makes the application agree with the broker.
+  kafka:
+    user-events:
+      partitions: 1
+    product-events:
+      partitions: 1
+    cart-events:
+      partitions: 1
+    wishlist-events:
+      partitions: 1
+    order-events:
+      partitions: 1
+    payment-events:
+      partitions: 1
   storage:
     # Endpoint and public base URL are pointed at the stubbed object store by IntegrationTest.
     access-key: test-access-key
     secret-key: test-secret-key
   outbox:
     poll-interval: 200ms
+  payment:
+    webhook-secret: test-payment-webhook-secret-0123456789
+  notification:
+    web-base-url: http://localhost:3000
   auth:
     otp:
       fixed-code: "123456"

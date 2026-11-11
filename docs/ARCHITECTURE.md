@@ -2,6 +2,12 @@
 
 _Status as of 6 November 2026. Covers what is implemented today: passwordless sign-up / sign-in and the platform underneath it._
 
+> **Not yet reflected here (added 11 November 2026):** the product catalogue with media, cart, wishlist, orders
+> (including the shipped / to-be-shipped views), payments, the checkout saga and the shared notification ports.
+> They follow exactly the patterns this document describes - CQRS buses, transactional outbox to Kafka, Postgres
+> write model, MongoDB read model - and are documented in `lailo-application/README.md` until the diagrams here
+> are redrawn.
+
 Lailo is an AI-first, ad-free e-commerce site: after signing in, the user gets a single chat box and the UI is rendered from predefined components based on what they ask. The chat experience is not built yet. This document describes the foundation that is: the system layout, the authentication flow, how data moves between stores, how security is enforced, and how it is all tested.
 
 ---
@@ -583,7 +589,7 @@ Current suite: 145 backend tests, 26 Vitest tests, 26 mocked Playwright tests, a
 
 | Need | Where to plug in |
 | --- | --- |
-| SMS / email delivery | Provide an `OtpSender` bean (e.g. MSG91, Twilio, SES). `LoggingOtpSender` is only the dev fallback |
+| SMS / email delivery | Provide an `EmailSender` and a `MessageSender` bean (e.g. SES, Postmark, MSG91, Twilio). They are shared by every feature - OTPs, order confirmations, receipts - and the logging adapters are only the dev fallback |
 | Production captcha | `LAILO_CAPTCHA_PROVIDER=turnstile`, plus the widget in `CaptchaField` |
 | Other services verifying JWTs | Move from HS256 to RS256/ES256 and publish a JWKS endpoint |
 | New read models (orders, recommendations) | Consume `lailo.auth.user-events.v1` or new topics; the outbox works for any aggregate |

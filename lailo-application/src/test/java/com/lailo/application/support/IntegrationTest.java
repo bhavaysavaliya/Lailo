@@ -1,12 +1,19 @@
 package com.lailo.application.support;
 
+import com.lailo.application.common.notification.EmailSender;
+import com.lailo.application.common.notification.MessageSender;
 import com.lailo.application.common.web.ClientInfo;
 import com.lailo.application.features.auth.domain.event.AuthEvents;
 import com.lailo.application.features.auth.infrastructure.otp.OtpSender;
+import com.lailo.application.features.cart.domain.event.CartEvents;
+import com.lailo.application.features.order.domain.event.OrderEvents;
+import com.lailo.application.features.payment.domain.event.PaymentEvents;
 import com.lailo.application.features.product.domain.event.ProductEvents;
+import com.lailo.application.features.wishlist.domain.event.WishlistEvents;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -26,17 +33,33 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 /**
  * Base class for every test that touches persistence: the real application context against embedded
  * PostgreSQL 18.6, MongoDB 7.0.15, Redis and Kafka. Repositories are never mocked.
- * All subclasses share one cached Spring context, so keep bean overrides here, not in subclasses.
+ *
+ * <p>All subclasses must share ONE cached Spring context, so keep bean overrides here and never add a
+ * context-changing annotation to a subclass. {@code @AutoConfigureWebTestClient} sits here for that reason
+ * rather than on the few classes that make HTTP calls: a second context would start a second set of Kafka
+ * consumers in the same groups, and every switch between the two contexts then rebalances every group -
+ * gaps long enough to stall a projection and fail an unrelated test.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureWebTestClient
 @ActiveProfiles("test")
-@EmbeddedKafka(partitions = 1, topics = {AuthEvents.TOPIC, ProductEvents.TOPIC},
+@EmbeddedKafka(partitions = 1,
+        topics = {AuthEvents.TOPIC, ProductEvents.TOPIC, CartEvents.TOPIC, WishlistEvents.TOPIC,
+                OrderEvents.TOPIC, PaymentEvents.TOPIC},
         bootstrapServersProperty = "spring.kafka.bootstrap-servers")
 public abstract class IntegrationTest {
 
     /** The only test double: OTP delivery is an external system (SMS / email gateway). Spy = real bean, verifiable. */
     @MockitoSpyBean
     protected OtpSender otpSender;
+
+    /** Email provider: an external boundary, so it is spied rather than mocked - the real adapter still runs. */
+    @MockitoSpyBean
+    protected EmailSender emailSender;
+
+    /** SMS provider: the same reasoning as {@link #emailSender}. */
+    @MockitoSpyBean
+    protected MessageSender messageSender;
 
     /**
      * Starts the embedded PostgreSQL and Redis and points R2DBC, Flyway and Redis at them.

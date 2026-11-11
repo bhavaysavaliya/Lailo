@@ -1,15 +1,48 @@
 package com.lailo.application.common.cqrs;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Unit tests for {@link SimpleCommandBus} routing and startup validation (pure logic, no I/O). */
 class SimpleCommandBusTest {
+
+    /**
+     * Wraps handlers as the lazy provider the bus takes, which is how Spring supplies them.
+     *
+     * @param handlers the handlers the bus should find
+     * @return a provider over exactly those handlers
+     */
+    private static ObjectProvider<CommandHandler<?, ?>> provider(CommandHandler<?, ?>... handlers) {
+        List<CommandHandler<?, ?>> all = List.of(handlers);
+        return new ObjectProvider<>() {
+            /**
+             * Never called: the bus only streams.
+             *
+             * @return never returns
+             */
+            @Override
+            public CommandHandler<?, ?> getObject() {
+                throw new UnsupportedOperationException("not needed by the bus");
+            }
+
+            /**
+             * Streams the handlers.
+             *
+             * @return the handlers in declaration order
+             */
+            @Override
+            public Stream<CommandHandler<?, ?>> stream() {
+                return all.stream();
+            }
+        };
+    }
 
     /**
      * Test command carrying a value.
@@ -57,7 +90,7 @@ class SimpleCommandBusTest {
      */
     @Test
     void routesCommandToItsHandler() {
-        CommandBus bus = new SimpleCommandBus(List.of(new PingHandler()));
+        CommandBus bus = new SimpleCommandBus(provider(new PingHandler()));
 
         StepVerifier.create(bus.dispatch(new Ping("x"))).expectNext("pong:x").verifyComplete();
     }
@@ -72,7 +105,7 @@ class SimpleCommandBusTest {
      */
     @Test
     void errorsWhenNoHandlerIsRegistered() {
-        CommandBus bus = new SimpleCommandBus(List.of(new PingHandler()));
+        CommandBus bus = new SimpleCommandBus(provider(new PingHandler()));
 
         StepVerifier.create(bus.dispatch(new Unhandled()))
                 .expectErrorMatches(e -> e instanceof IllegalStateException && e.getMessage().contains("Unhandled"))
@@ -83,13 +116,16 @@ class SimpleCommandBusTest {
      * Two handlers for one command type are a startup error.
      * <ul>
      *   <li><b>Given</b> two {@code PingHandler} instances</li>
-     *   <li><b>When</b> the bus is constructed</li>
-     *   <li><b>Then</b> construction throws {@code IllegalStateException} mentioning a duplicate handler</li>
+     *   <li><b>When</b> startup finishes and the bus builds its routing table</li>
+     *   <li><b>Then</b> it throws {@code IllegalStateException} mentioning a duplicate handler, so the
+     *       application never starts with ambiguous routing</li>
      * </ul>
      */
     @Test
     void rejectsDuplicateHandlersAtStartup() {
-        assertThatThrownBy(() -> new SimpleCommandBus(List.of(new PingHandler(), new PingHandler())))
+        SimpleCommandBus bus = new SimpleCommandBus(provider(new PingHandler(), new PingHandler()));
+
+        assertThatThrownBy(bus::afterSingletonsInstantiated)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Duplicate handler");
     }

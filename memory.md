@@ -1,7 +1,7 @@
 # Lailo — Project Memory
 
 > Load this at the start of a session (`@memory.md`) to continue development.
-> Last updated: 2026-11-10 (media storage added same day). Update the **Status** and **Next steps** sections whenever work lands.
+> Last updated: 2026-11-11 (cart, wishlist, orders, payments, saga, shared notifications). Update the **Status** and **Next steps** sections whenever work lands.
 
 ---
 
@@ -49,12 +49,17 @@ backend turns a prompt into a validated `[{ component, props }]` **UI spec**; `l
 | Architecture doc (`docs/ARCHITECTURE.md` + `.pdf`) | ✅ Done |
 | Product catalogue API (CQRS, same pattern as auth) | ✅ Done, backend only, fully tested |
 | Product images + video (SeaweedFS, presigned direct upload) | ✅ Done, backend only, fully tested |
+| Cart + wishlist (CQRS, outbox, live catalogue pricing) | ✅ Done, backend only, fully tested |
+| Orders: checkout, **shipped / to-be-shipped** tabs, fulfilment pipeline | ✅ Done, backend only, fully tested |
+| Payments (gateway port, simulated adapter, signed webhook, refunds) | ✅ Done, backend only, fully tested |
+| Checkout **saga** with compensation (stock + refund) | ✅ Done, backend only, fully tested |
+| Shared **EmailSender / MessageSender** ports + idempotent dispatcher; auth OTPs now ride them | ✅ Done |
+| Order-placed email + SMS (own consumer group) | ✅ Done |
 | **Chat screen as post-login home** | ⏳ Next |
 | UI spec contract + component registry | ⏳ Planned |
-| Cart, checkout, orders | ⏳ Planned |
 | Real OTP delivery, Turnstile widget in web | ⏳ Planned (backend Turnstile verification already exists) |
 
-Test counts at last run (2026-11-10): backend **145** (`./mvnw verify`: 68 unit/slice + 77 IT), Vitest **26**, Playwright mocked **26 passed / 2 skipped**, Playwright full-stack **1**. All green.
+Test counts at last run (2026-11-11): backend **247** (`./mvnw verify`: 107 unit/slice + 140 IT), Vitest **26**, Playwright mocked **26 passed / 2 skipped**, Playwright full-stack **1**. All green.
 
 ---
 
@@ -76,7 +81,12 @@ Lailo/
 │   ├── .env.example
 │   └── src/main/java/com/lailo/application/
 │       ├── common/cqrs       Command, Query, CommandBus, QueryBus, SimpleCommandBus/QueryBus, HandlerRegistry
+│       │                     (buses resolve handlers LAZILY via ObjectProvider - handlers depend on the bus)
 │       ├── common/outbox     OutboxMessage, OutboxRepository (FOR UPDATE SKIP LOCKED), OutboxPublisher, OutboxRelay
+│       ├── common/notification EmailSender, MessageSender, EmailMessage, TextMessage, Recipient,
+│       │                     NotificationRequest, NotificationDispatcher (dedupe claim), NotificationDelivery,
+│       │                     LoggingEmail/MessageSender, NotificationProperties, NotificationConfig
+│       ├── common/saga       SagaInstance, SagaRepository, SagaStore (compare-and-set step), SagaStatus
 │       ├── common/storage    ObjectStorage, S3ObjectStorage (AWS SDK v2 -> SeaweedFS), StorageProperties, StorageConfig
 │       ├── common/web        ApiException, GlobalExceptionHandler (ProblemDetail + code), ClientInfo
 │       ├── features/auth
@@ -91,12 +101,29 @@ Lailo/
 │       │   ├── domain        Product, ProductDetails, ProductStatus, Slug, ProductMedia, MediaType, MediaStatus, MediaKind, MediaKeys, event/ProductEvents
 │       │   ├── infrastructure persistence/{ProductRepository,ProductMediaRepository}, readmodel/{ProductDocument,ProductMediaDocument,ProductCatalogRepository,ProductProjector}, messaging/ProductEventsListener
 │       │   └── config        ProductBeansConfig (NewTopic), MediaProperties
+│       ├── features/cart     CartItem (keyed by user, no carts table), CartReader, Add/Update/Remove/Clear,
+│       │                     GetCartQuery, CartController, CartEvents -> lailo.cart.cart-events.v1
+│       ├── features/wishlist WishlistItem, WishlistReader, Add/Remove/MoveToCart, WishlistController,
+│       │                     WishlistEvents -> lailo.wishlist.wishlist-events.v1
+│       ├── features/order    Order (@Embedded ShippingAddress), OrderItem, OrderStatus, OrderBucket,
+│       │                     OrderNumber, OrderTotals, CancelReason; PlaceOrder/ConfirmOrder/CancelOrder/
+│       │                     AttachPaymentToOrder/AdvanceOrderFulfilment; GetOrder/ListOrders (+OrderCounts);
+│       │                     readmodel OrderDocument/OrderProjector (projects order AND payment events);
+│       │                     saga/CheckoutSaga; messaging/{OrderEventsListener,CheckoutSagaListener};
+│       │                     notification/{OrderNotificationTemplates,OrderNotificationListener};
+│       │                     config/CheckoutProperties; OrderEvents -> lailo.order.order-events.v1
+│       ├── features/payment  Payment, PaymentMethod, PaymentStatus; gateway/{PaymentGateway,
+│       │                     SimulatedPaymentGateway, GatewayIntent/Request/Outcome}; Initiate/Confirm/
+│       │                     Refund/HandlePaymentWebhook; GetPayment; PaymentController;
+│       │                     PaymentEvents -> lailo.payment.payment-events.v1 (keyed by ORDER id)
 │       ├── observability     LogsCommonConfig (owner's AOP logging aspect)
 │       └── security/auth/config/AuthConfig.java   filter chain, JWT encoder/decoder, CORS, CSRF
 │   └── src/main/resources/
 │       ├── application.yaml        prod-safe defaults, secrets from env
 │       ├── application-dev.yaml    OTP 123456, insecure cookies, relaxed limits
-│       └── db/migration/V1__create_products.sql (sample, dropped by V3), V2__create_auth_tables.sql, V3__create_product_catalogue.sql, V4__create_product_media.sql
+│       └── db/migration/V1 (sample, dropped by V3), V2__create_auth_tables.sql, V3__create_product_catalogue.sql,
+│           V4__create_product_media.sql, V5__create_cart_and_wishlist.sql, V6__create_orders.sql,
+│           V7__create_payments.sql, V8__create_saga_and_notifications.sql
 │   └── src/test/java/.../
 │       ├── support/          IntegrationTest (base; also resets the WireMock object store + givenStoredObject()), EmbeddedInfrastructure (adds objectStorage() WireMock), EmbeddedInfrastructureVersionIT, TestAuthProperties, ProductFixtures
 │       ├── features/auth/AuthFlowIT.java          full HTTP flow
@@ -148,6 +175,28 @@ POST   /api/v1/products/{id}/media              {contentType,sizeBytes} -> presi
 PUT    {uploadUrl}                              client uploads bytes straight to SeaweedFS
 POST   /api/v1/products/{id}/media/{mediaId}    confirm (HEAD-verified) -> publishes to the catalogue
 DELETE /api/v1/products/{id}/media/{mediaId}    remove row + event + object -> 204
+
+GET    /api/v1/cart                             priced live from the catalogue; no-store
+POST   /api/v1/cart/items                       {productId, quantity} (repeat add raises the line)
+PUT    /api/v1/cart/items/{productId}           {quantity} (1..20; 0 is rejected, not a delete)
+DELETE /api/v1/cart/items/{productId}           -> updated cart, or 404 CART_ITEM_NOT_FOUND
+DELETE /api/v1/cart                             empty, idempotent -> 204
+
+GET    /api/v1/wishlist                         saved products + live stock/availability
+POST   /api/v1/wishlist/items                   {productId, note?} idempotent
+DELETE /api/v1/wishlist/items/{productId}
+POST   /api/v1/wishlist/items/{productId}/move-to-cart   returns {cart, wishlist}
+
+POST   /api/v1/orders                           {address, paymentMethod} -> 201 + Location
+GET    /api/v1/orders?bucket=TO_BE_SHIPPED|SHIPPED|CANCELLED|ALL&page&size   + counts for every tab
+GET    /api/v1/orders/{orderId}                 Mongo, falls back to Postgres (read-your-write)
+POST   /api/v1/orders/{orderId}/cancel          -> 204; stock + refund follow via the saga
+POST   /api/v1/orders/{orderId}/fulfilment      {target: PACKED|SHIPPED|DELIVERED, courierName?, trackingNumber?,
+                                                 expectedDeliveryDate?} -> 204  (needs an ops role eventually)
+
+GET    /api/v1/payments/{paymentId}
+POST   /api/v1/payments/{paymentId}/confirm     outcome read from the gateway, never from the client
+POST   /api/v1/payments/webhook                 PUBLIC + CSRF-exempt; X-Lailo-Signature HMAC, fails closed
 ```
 
 **Key decisions and why**
@@ -163,6 +212,34 @@ DELETE /api/v1/products/{id}/media/{mediaId}    remove row + event + object -> 2
 - **Outbox**: `OutboxRelay` polls every 1 s with `FOR UPDATE SKIP LOCKED`, publishes to topic `lailo.auth.user-events.v1` (key = userId, 3 partitions, declared via `NewTopic`), then marks published. `UserEventsListener` → `UserProfileProjector` does idempotent upserts (`$setOnInsert`, `$min`/`$max`).
 - **Catalogue (product feature)**: rewritten from the owner's sample controller/service/repository into the auth CQRS shape. Postgres `products` (V3, which drops the `lailo_products` sample table) + outbox -> topic `lailo.catalog.product-events.v1` -> `ProductProjector` -> Mongo `products`. Events (`ProductCreated/Updated/Archived`) carry **full state**; every projection upsert is guarded by `updatedAt < occurredAt` and the duplicate-key error a guarded upsert raises is swallowed as "stale event". Search reads Mongo only (price stored as Decimal128 via `@Field(targetType=DECIMAL128)` so ranges/sorts are numeric, user text quoted with `Pattern.quote`); single-product read falls back to Postgres for read-your-write. Slug = `name-<id prefix>`, unique by construction, never changed by a rename. Archive is a soft delete; editing an archived product is 409 `PRODUCT_ARCHIVED`. Reads public in `AuthConfig`, writes only `authenticated()` — no seller/admin role exists yet (JWT roles claim is hard-coded `CUSTOMER`).
 - **Product media**: SeaweedFS (S3 API, `chrislusf/seaweedfs:4.53`) via AWS SDK v2 (`software.amazon.awssdk:s3` 2.57.12), path-style access. **Presigned direct upload**: the API signs a PUT (content type + length are in the signature), the client uploads to the store, then confirms; a `HeadObject` verifies the bytes before the row flips PENDING -> READY and `ProductMediaAdded` is appended. Bytes never pass through Spring. Keys are `products/{productId}/{mediaId}.{ext}` (immutable, CDN-cacheable); only the key is stored, URLs are built at read time from `lailo.storage.public-base-url`. Mongo stores media as a **map keyed by media id** ($set/$unset are idempotent; $push would duplicate on redelivery). Media bucket is anonymously readable (shop-window content). Limits: 10 MB image, 300 MB video, 12 per product. `LAILO_STORAGE_ACCESS_KEY`/`SECRET_KEY` are required env vars. Not built yet: thumbnails/derivatives (belong in a `ProductMediaAdded` consumer), multipart upload, pending-upload sweeper.
+- **Cart / wishlist**: keyed by **user id, no parent table**; unique `(user_id, product_id)` makes a repeat add an
+  update. Read from the write model + one bulk catalogue read (`GetProductsQuery`), NOT a Mongo projection: a cart is
+  read right after every write (projection lag would show) and the only denormalisable fields - name, price, stock -
+  are exactly the ones that must be live at checkout. Live price is charged; `unitPriceWhenAdded` is shown as "was".
+  An archived product stays in the cart marked unavailable (and blocks checkout) rather than silently vanishing.
+- **Orders**: Postgres `orders` (+ `@Embedded.Nullable(prefix="ship_")` ShippingAddress) and `order_items`
+  (immutable snapshot: no FK to products). Mongo `orders` read model stores a derived `bucket`, so a tab is one
+  equality match; the list does NOT fall back to Postgres (a list must stay one indexed query) while the single-order
+  read does. `OrderBucket` owns shipped/to-be-shipped in one place. `OrderNumber` = `LAILO-yyyyMMdd-XXXXXX` from an
+  unambiguous alphabet, unique index + one retry on collision.
+- **Checkout saga** (`common/saga` + `CheckoutSaga`): `PlaceOrderHandler` commits only order + lines + cart clear +
+  `OrderPlaced` in one tx; the saga then reserves stock, opens the payment, confirms on authorisation, and on
+  cancellation releases stock + refunds. Idempotency is a compare-and-set on `saga_instances.step`, not the consumer
+  offset. Compensation is claimed **one-shot** (`RELEASING`) because a double release would invent stock; a genuine
+  compensation failure becomes `COMPENSATION_FAILED` for an operator instead of retrying forever.
+- **Stock**: `ReserveStockCommand` is `UPDATE ... WHERE stock_quantity >= :qty` - the DB prevents overselling, not
+  the app; all lines in one tx so a partially reserved order can't exist. Emits `ProductStockChanged` (absolute
+  quantity, never a delta, so a replay can't double-count).
+- **Payments**: `PaymentGateway` port + `SimulatedPaymentGateway` (reference containing `decline` is its documented
+  test hook; HMAC-signs its own webhooks). The gateway is called BEFORE the tx opens - never hold a DB tx across a
+  third-party call. A decline is committed in its own tx *before* the error is signalled, or the saga would never
+  learn to cancel. Confirming an authorised payment is a no-op (client and webhook both call it). Webhook ignores the
+  body's outcome and re-asks the provider, so a forged body cannot mark an order paid. COD is authorised on creation.
+- **Notifications**: `common/notification` holds the shared `EmailSender`/`MessageSender` ports used by EVERY feature -
+  auth OTPs now go out through them (`NotificationOtpSender` replaced `LoggingOtpSender`). `NotificationDispatcher`
+  dedupes per `(dedupe_key, channel)` claim row, so at-least-once Kafka delivery becomes exactly-once-per-channel;
+  a FAILED row is re-claimable so the consumer's retry resends. Order-placed email+SMS is its own consumer group, so
+  a provider outage never stalls the projector or the saga. OTP bypasses the dispatcher (every resend is a new code).
 - **Captcha strategy**: `BuiltinCaptchaService` (AWT image, default) or `TurnstileCaptchaService` (fails closed), switched by `LAILO_CAPTCHA_PROVIDER`.
 - **Frontend BFF**: browser only calls the Next origin; `/api/*` rewritten to Spring so cookies are first-party. `/account` server component calls the API with `Authorization: Bearer <lailo_at>`.
 - **API client**: echoes CSRF cookie, maps ProblemDetail → `ApiError(code)`, single-flight refresh on 401 then retry.
@@ -223,9 +300,43 @@ Adding a backend test that touches persistence: extend `support/IntegrationTest`
 - WireMock's HEAD response may not carry a usable `Content-Length`; `ConfirmProductMediaUploadHandler` falls back to the declared size (which the signature already bound) so `size_bytes > 0` holds.
 - Once a Mongo catalogue document exists it serves the product read, so a just-confirmed image is not in `GET /products/{id}` until the media event is projected (~1s). The confirm response returns the item itself.
 
+**Outbox / Kafka / consumers (learned the hard way 2026-11-11)**
+- `OutboxRelay` must **drain the locked rows (`collectList`) before publishing**. Publishing straight off the
+  `FOR UPDATE SKIP LOCKED` cursor leaves that result stream open while `markPublished` runs on the same
+  connection, and one R2DBC connection cannot interleave two statements: the connection sits
+  *idle in transaction* mid-cursor and the batch never finishes. Symptom was brutal to diagnose - the relay
+  silently stopped, so every projection test (auth, catalogue, checkout) timed out while all handler tests
+  passed. Diagnosis: `jstack` showed no thread in the chain, and `pg_stat_activity` showed
+  `idle in transaction / ClientRead` right after the SELECT.
+- `KafkaTemplate.send()` **blocks** the caller while the producer fetches topic metadata (`max.block.ms`,
+  default 60s). Never call it on an event-loop thread - the relay now does
+  `.subscribeOn(Schedulers.boundedElastic())`, and `max.block.ms` is pinned to 5s so a broker hiccup fails
+  instead of hanging.
+- **One Spring context for all ITs.** `@AutoConfigureWebTestClient` lives on `IntegrationTest`, not on
+  subclasses: a second cached context starts a second set of consumers in the SAME groups, and every switch
+  between contexts rebalances all of them (one gap measured at 23s - long enough to fail an unrelated test).
+- A test that boots embedded infrastructure is an **`*IT`**, never a `*Test`. `LailoApplicationTests` was
+  renamed `LailoApplicationIT` so the build does not start Postgres/Mongo/Kafka twice.
+- `application-test.yaml` pins every `lailo.kafka.*.partitions` to **1**, matching what `@EmbeddedKafka`
+  pre-creates; letting the admin client grow topics to 3 partitions on a live embedded broker is flaky.
+- Two events about the same aggregate must not share an `occurredAt`: Mongo stores millisecond precision, so
+  the second one looks like a replay and the `updatedAt < occurredAt` guard drops it. COD hit this exactly
+  (`PaymentInitiated` + `PaymentAuthorized` in one tx) - the authorisation is now stamped +1ms.
+
+**CQRS buses**
+- Handlers that compose other use cases (checkout -> clear cart, saga -> reserve stock, cart -> read catalogue)
+  depend on the bus, so `SimpleCommandBus`/`SimpleQueryBus` resolve handlers **lazily** through
+  `ObjectProvider` and build their index in `afterSingletonsInstantiated()`. A constructor `List<Handler>`
+  injection is a circular dependency and the context will not start.
+
 **Reactive / transactions**
 - An error inside `.as(tx::transactional)` rolls back everything in it. Commit side effects (e.g. revocations) in their own transaction *before* emitting the error. (Real bug found by switching from mocks to real DBs.)
 - Wrap chained steps in `Mono.defer` when order matters so later steps aren't invoked at assembly time.
+  Real bug found this way: `validate(cart).then(write(cmd, cart))` priced an **empty** cart at assembly time, so
+  checkout threw `IllegalArgumentException` instead of `CART_EMPTY`. Needs `.then(Mono.defer(() -> write(...)))`.
+- `Mono<Void>` completes **empty**, so `x.flatMap(...).switchIfEmpty(insert)` runs the insert branch as well.
+  Real bug: the wishlist's "update the note" path fell through to the insert and hit the unique index. Use
+  `.map(Optional::of).defaultIfEmpty(Optional.empty())` instead.
 - Logging aspect prints args at DEBUG: commands/DTOs override `toString()` to mask OTPs, tokens and identifiers. Keep doing that for sensitive types.
 
 **Next.js 16 specifics** (read `lailo-web/node_modules/next/dist/docs/` first)
@@ -266,8 +377,17 @@ Adding a backend test that touches persistence: extend `support/IntegrationTest`
 2. **UI spec contract**: `[{component, props}]` schema shared by backend and web; a `chat` feature package with a `SendMessageCommand` handler.
 3. **Component registry** in `lailo-web` (start: `ProductGrid`, `ProductCard`, `ComparisonTable`); unknown components ignored; each component tested.
 4. **Catalogue / search** behind the chat: the API exists (`/api/v1/products`, media included); still needed are a seller/admin role for writes, Mongo indexes + a real text index, seed data with real images, and a `ProductMediaAdded` consumer for thumbnails / video posters.
-5. Cart, addresses, checkout as conversational steps; then orders + tracking.
+5. Cart / checkout / order tracking as conversational steps - the APIs all exist now (§5); what's missing is the
+   web UI, a saved-address book (addresses are entered per order today), and a real courier integration behind
+   `AdvanceOrderFulfilmentCommand`.
 6. Real `OtpSender` (SMS/email), Turnstile widget in `CaptchaField`, RS256 + JWKS if other services verify tokens.
 7. Replace the default `lailo-web/README.md` (still create-next-app boilerplate).
 
-Open decisions to ask the owner about: which LLM/provider powers the chat; product data source; whether `/account` remains a page or becomes a chat component.
+8. Seller / ops roles: catalogue writes and `POST /orders/{id}/fulfilment` are only `authenticated()` today (the JWT
+   `roles` claim is still hard-coded `CUSTOMER`). The fulfilment route is restricted to the order's owner as a
+   placeholder - it needs a real ops role.
+9. Mongo indexes for the orders read model: `(userId, bucket, placedAt)`, `(userId, placedAt)`, unique `orderNumber`.
+10. Sweepers / monitors: stuck sagas (`ix_saga_instances_unfinished`, `COMPENSATION_FAILED`), failed notifications
+   (`ix_notification_deliveries_failed`), abandoned media uploads.
+
+Open decisions to ask the owner about: which LLM/provider powers the chat; product data source; whether `/account` remains a page or becomes a chat component; which payment provider (Razorpay / Cashfree / Stripe) and which SMS + email providers to wire into the existing ports.

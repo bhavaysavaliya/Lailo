@@ -22,6 +22,7 @@ public final class ProductEvents {
     public static final String PRODUCT_ARCHIVED = "ProductArchived";
     public static final String PRODUCT_MEDIA_ADDED = "ProductMediaAdded";
     public static final String PRODUCT_MEDIA_REMOVED = "ProductMediaRemoved";
+    public static final String PRODUCT_STOCK_CHANGED = "ProductStockChanged";
 
     /** Not instantiable: constants and event types only. */
     private ProductEvents() {
@@ -171,6 +172,29 @@ public final class ProductEvents {
                     .position(media.getPosition())
                     .occurredAt(media.getReadyAt())
                     .build();
+        }
+    }
+
+    /**
+     * A product's available stock moved, because an order reserved units or a cancellation released them.
+     * Carries the resulting quantity rather than a delta, so a redelivered event cannot double-count.
+     *
+     * @param eventId unique event id
+     * @param productId the product's id
+     * @param stockQuantity units available after the change
+     * @param occurredAt change time
+     */
+    public record ProductStockChanged(String eventId, String productId, int stockQuantity, Instant occurredAt) {
+
+        /**
+         * Builds the event from the product as stored after the change.
+         *
+         * @param product the product as stored
+         * @return the event, with a fresh event id
+         */
+        public static ProductStockChanged of(Product product) {
+            return new ProductStockChanged(UUID.randomUUID().toString(), product.getId().toString(),
+                    product.getStockQuantity(), product.getUpdatedAt());
         }
     }
 

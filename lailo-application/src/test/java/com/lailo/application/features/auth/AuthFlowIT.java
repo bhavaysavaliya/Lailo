@@ -6,7 +6,6 @@ import com.lailo.application.features.auth.infrastructure.readmodel.UserProfileR
 import com.lailo.application.support.IntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseCookie;
@@ -25,7 +24,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * End-to-end sign-in over HTTP against real Postgres, Redis, Kafka and MongoDB:
  * captcha -> OTP -> verify -> profile -> Kafka projection -> refresh rotation -> reuse detection -> logout.
  */
-@AutoConfigureWebTestClient
 class AuthFlowIT extends IntegrationTest {
 
     @Autowired WebTestClient client;

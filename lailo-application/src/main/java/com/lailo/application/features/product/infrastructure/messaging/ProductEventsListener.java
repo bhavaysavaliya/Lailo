@@ -41,6 +41,8 @@ public class ProductEventsListener {
                     projector.on(jsonMapper.readValue(record.value(), ProductEvents.ProductArchived.class));
             case ProductEvents.PRODUCT_MEDIA_ADDED ->
                     projector.on(jsonMapper.readValue(record.value(), ProductEvents.ProductMediaAdded.class));
+            case ProductEvents.PRODUCT_STOCK_CHANGED ->
+                    projector.on(jsonMapper.readValue(record.value(), ProductEvents.ProductStockChanged.class));
             case ProductEvents.PRODUCT_MEDIA_REMOVED ->
                     projector.on(jsonMapper.readValue(record.value(), ProductEvents.ProductMediaRemoved.class));
             default -> Mono.empty(); // other consumers (search indexing, analytics) handle the rest

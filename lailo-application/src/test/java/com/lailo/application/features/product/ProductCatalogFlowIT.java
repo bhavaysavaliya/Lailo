@@ -11,7 +11,6 @@ import com.lailo.application.support.IntegrationTest;
 import com.lailo.application.support.ProductFixtures;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -36,7 +35,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * End-to-end catalogue lifecycle over HTTP against real Postgres, Kafka and MongoDB:
  * create -> read-your-write -> outbox to Kafka to MongoDB projection -> public search -> update -> archive.
  */
-@AutoConfigureWebTestClient
 class ProductCatalogFlowIT extends IntegrationTest {
 
     @Autowired WebTestClient client;

@@ -34,6 +34,23 @@ public final class ProductErrors {
     }
 
     /**
+     * Fewer units are available than were asked for. The available count is returned so the caller can offer
+     * "add the 2 we have left" instead of a dead end.
+     *
+     * @param productId the product that ran short
+     * @param requested units asked for
+     * @param available units actually in stock
+     * @return 409 {@code PRODUCT_OUT_OF_STOCK}
+     */
+    public static ApiException outOfStock(UUID productId, int requested, int available) {
+        return new ApiException(HttpStatus.CONFLICT, "PRODUCT_OUT_OF_STOCK",
+                available == 0
+                        ? "This product just went out of stock."
+                        : "Only " + available + " left in stock, so " + requested + " can't be reserved.",
+                java.util.Map.of("productId", productId.toString(), "requested", requested, "available", available));
+    }
+
+    /**
      * The content type is not one Lailo stores.
      *
      * @param contentType what the client declared

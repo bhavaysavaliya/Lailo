@@ -12,6 +12,9 @@ lailo:
     access-key: ${LAILO_STORAGE_ACCESS_KEY:lailo-dev}
     secret-key: ${LAILO_STORAGE_SECRET_KEY:lailo-dev-secret}
     create-bucket-if-missing: true   # a fresh SeaweedFS needs no manual setup
+  payment:
+    # Dev-only secret; the simulated gateway signs its own callbacks with it.
+    webhook-secret: ${LAILO_PAYMENT_WEBHOOK_SECRET:dev-only-payment-webhook-secret-0123456789}
   auth:
     otp:
       fixed-code: "123456"   # every OTP is 123456 until an SMS/email provider is integrated

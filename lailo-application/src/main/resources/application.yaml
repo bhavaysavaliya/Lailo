@@ -41,6 +41,10 @@ spring:
         enable.idempotence: true
         delivery.timeout.ms: 15000
         request.timeout.ms: 5000
+        # send() blocks the caller for up to this long while it waits for topic metadata. The default of
+        # 60s outlives every other timeout here, so a broker hiccup would look like a hang rather than a
+        # failure the outbox relay can retry.
+        max.block.ms: 5000
     consumer:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -74,6 +78,26 @@ lailo:
     path-style-access: true          # SeaweedFS and MinIO serve every bucket from one host
     upload-url-ttl: 10m
     create-bucket-if-missing: false  # production credentials are not allowed to create buckets
+  # Email and SMS are one shared pair of ports for every feature (auth OTPs, order updates, receipts).
+  # These values are what the templates put in subjects, signatures and links.
+  notification:
+    brand-name: ${LAILO_BRAND_NAME:Lailo}
+    from-email: ${LAILO_FROM_EMAIL:no-reply@lailo.in}
+    from-name: ${LAILO_FROM_NAME:Lailo}
+    web-base-url: ${LAILO_WEB_BASE_URL:http://localhost:3000}
+    support-email: ${LAILO_SUPPORT_EMAIL:support@lailo.in}
+  # Commercial policy, not infrastructure: marketing changes these, not engineering.
+  checkout:
+    shipping-fee: ${LAILO_SHIPPING_FEE:49.00}
+    free-shipping-threshold: ${LAILO_FREE_SHIPPING_THRESHOLD:499.00}
+    cod-enabled: ${LAILO_COD_ENABLED:true}
+  payment:
+    # Only the simulated adapter exists so far; a real provider is a PaymentGateway bean.
+    provider: ${LAILO_PAYMENT_PROVIDER:simulated}
+    # Webhook callbacks are authenticated by this secret alone, so it is required and has no default.
+    webhook-secret: ${LAILO_PAYMENT_WEBHOOK_SECRET}
+    intent-ttl: 15m
+    simulated-checkout-url: ${LAILO_WEB_BASE_URL:http://localhost:3000}/checkout/simulated
   product:
     media:
       image:

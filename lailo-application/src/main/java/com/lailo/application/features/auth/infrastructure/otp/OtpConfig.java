@@ -1,5 +1,8 @@
 package com.lailo.application.features.auth.infrastructure.otp;
 
+import com.lailo.application.common.notification.EmailSender;
+import com.lailo.application.common.notification.MessageSender;
+import com.lailo.application.common.notification.NotificationProperties;
 import com.lailo.application.features.auth.config.AuthProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -8,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.security.SecureRandom;
 
-/** Wires OTP generation and the fallback delivery channel. */
+/** Wires OTP generation and the delivery channel. */
 @Slf4j
 @Configuration
 public class OtpConfig {
@@ -38,10 +41,19 @@ public class OtpConfig {
         };
     }
 
-    /** Replace with an SMS / email provider bean (e.g. MSG91, Twilio, SES) - this one only logs. */
+    /**
+     * Delivers codes over the shared email and messaging ports, so auth needs no provider of its own.
+     *
+     * @param emailSender shared email channel
+     * @param messageSender shared short-message channel
+     * @param notifications branding and links used by the templates
+     * @param auth auth settings, for the code lifetime quoted in the message
+     * @return the sender
+     */
     @Bean
     @ConditionalOnMissingBean(OtpSender.class)
-    OtpSender loggingOtpSender() {
-        return new LoggingOtpSender();
+    OtpSender notificationOtpSender(EmailSender emailSender, MessageSender messageSender,
+                                    NotificationProperties notifications, AuthProperties auth) {
+        return new NotificationOtpSender(emailSender, messageSender, notifications, auth);
     }
 }

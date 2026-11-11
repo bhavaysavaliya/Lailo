@@ -27,7 +27,12 @@ import org.springframework.security.web.server.authentication.ServerAuthenticati
 import org.springframework.security.web.server.authorization.HttpStatusServerAccessDeniedHandler;
 import org.springframework.security.web.server.csrf.CookieServerCsrfTokenRepository;
 import org.springframework.security.web.server.csrf.CsrfToken;
+import org.springframework.security.web.server.csrf.CsrfWebFilter;
 import org.springframework.security.web.server.csrf.ServerCsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.server.util.matcher.AndServerWebExchangeMatcher;
+import org.springframework.security.web.server.util.matcher.NegatedServerWebExchangeMatcher;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatcher;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
@@ -51,6 +56,9 @@ import java.util.List;
 @EnableWebFluxSecurity
 public class AuthConfig {
 
+    /** Provider callback route: public and CSRF-exempt, authenticated by its signature. */
+    private static final String PAYMENT_WEBHOOK_PATH = "/api/v1/payments/webhook";
+
     /**
      * Builds the WebFlux security filter chain: CORS, cookie-based CSRF, stateless JWT authentication and the
      * public/protected route rules. Form login, HTTP basic and Spring's logout are disabled.
@@ -69,10 +77,19 @@ public class AuthConfig {
         CookieServerCsrfTokenRepository csrfRepo = CookieServerCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepo.setCookieCustomizer(c -> c.sameSite("Strict").secure(props.cookies().secure()).path("/"));
 
+        // The payment provider's callback is a server-to-server POST with no cookies and no way to read an
+        // XSRF-TOKEN, so CSRF cannot apply to it. It is authenticated by the provider's HMAC signature
+        // instead, which the handler verifies before anything else and fails closed on.
+        ServerWebExchangeMatcher csrfProtected = new AndServerWebExchangeMatcher(
+                CsrfWebFilter.DEFAULT_CSRF_MATCHER,
+                new NegatedServerWebExchangeMatcher(
+                        ServerWebExchangeMatchers.pathMatchers(PAYMENT_WEBHOOK_PATH)));
+
         return http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfRepo)
+                        .requireCsrfProtectionMatcher(csrfProtected)
                         // plain (non-XOR) token so a SPA can echo the cookie value as-is
                         .csrfTokenRequestHandler(new ServerCsrfTokenRequestAttributeHandler()))
                 .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
@@ -83,6 +100,8 @@ public class AuthConfig {
                         .pathMatchers("/actuator/health/**", "/actuator/info").permitAll()
                         // the catalogue is the shop window: browsing needs no account
                         .pathMatchers(HttpMethod.GET, "/api/v1/products", "/api/v1/products/**").permitAll()
+                        // Signed by the provider, not by a session: see csrfProtected above.
+                        .pathMatchers(HttpMethod.POST, PAYMENT_WEBHOOK_PATH).permitAll()
                         .pathMatchers("/api/**").authenticated()
                         .anyExchange().permitAll())
                 .oauth2ResourceServer(rs -> rs

@@ -70,6 +70,20 @@ public class ProductProjector {
     }
 
     /**
+     * Projects {@code ProductStockChanged}: only the quantity moves, so nothing else in the document is
+     * touched and a concurrent price update cannot be overwritten by a stale stock event.
+     *
+     * @param e the event
+     * @return completion signal
+     */
+    public Mono<Void> on(ProductEvents.ProductStockChanged e) {
+        Update u = new Update()
+                .set("stockQuantity", e.stockQuantity())
+                .setOnInsert("createdAt", e.occurredAt());
+        return apply(e.productId(), e.occurredAt(), u);
+    }
+
+    /**
      * Projects {@code ProductMediaAdded}: writes the item under its id, which makes a redelivery a no-op
      * rewrite instead of a duplicate gallery entry.
      *
